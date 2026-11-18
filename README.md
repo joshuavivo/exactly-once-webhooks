@@ -131,6 +131,11 @@ npm run typecheck
 DATABASE_URL=postgres://... npm test   # also runs the Postgres tests
 ```
 
+## Credits
+
+Architected and directed by [Joshua Vivo](https://github.com/joshuavivo) ([Shadow Vivo LLC](https://shadowvivo.com)), built with AI assistance (Claude). The design and the judgment are mine.
+
 ## License
 
 MIT
+
