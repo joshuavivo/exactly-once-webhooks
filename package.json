@@ -1,0 +1,34 @@
+{
+  "name": "exactly-once-webhooks",
+  "version": "0.1.0",
+  "description": "Process payment webhooks exactly once, even when they are delivered twice or arrive at the same moment. In-memory and Postgres stores.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "src", "schema.sql", "README.md", "LICENSE"],
+  "scripts": {
+    "test": "node --test",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "keywords": [
+    "webhook",
+    "idempotency",
+    "exactly-once",
+    "payments",
+    "stripe",
+    "postgres"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}
