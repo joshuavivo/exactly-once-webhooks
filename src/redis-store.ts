@@ -22,10 +22,16 @@ export interface RedisLike {
 export type RedisStoreOptions = {
   /** Prefix for every key written, so this store shares a Redis safely. Default "eow:". */
   keyPrefix?: string;
-  /** How long a key is remembered, in seconds. This IS the dedup window and the
-   *  retention policy in one — after it, a key is forgotten and a re-delivery runs
+  /** How long a *completed* key is remembered, in seconds — the dedup and
+   *  retention window in one. After it a key is forgotten and a re-delivery runs
    *  again, so set it above the provider's retry window. Default 86400 (1 day). */
   ttlSeconds?: number;
+  /** How long an in-flight (`pending`) claim lives before it expires, in seconds.
+   *  Kept short so a holder that crashes mid-effect frees the key in seconds, not
+   *  for the whole `ttlSeconds` window. Must exceed the effect's worst-case
+   *  duration: if the effect runs longer than this, the claim expires mid-flight
+   *  and another caller may run it too (there is no ownership token yet). Default 30. */
+  pendingTtlSeconds?: number;
   /** How often a waiting caller re-checks the holder, in ms. Default 25. */
   pollIntervalMs?: number;
   /** How long a waiting caller waits for the holder before giving up, in ms.
@@ -46,9 +52,11 @@ const MAX_CLAIM_ATTEMPTS = 50;
  *
  * The claim is a single atomic `SET key ... NX PX` — exactly one concurrent
  * caller sets the key and runs the effect; the rest see the key already there and
- * poll until it holds the result. If the effect throws, the key is deleted so a
- * later delivery can retry. The TTL doubles as the retention window, so unlike the
- * Postgres store there is no table to prune.
+ * poll until it holds the result. The claim is written with a short `pendingTtl`,
+ * so a holder that crashes mid-effect frees the key in seconds; on success the key
+ * is rewritten with the full `ttlSeconds` window. If the effect throws, the key is
+ * deleted so a later delivery can retry. The TTL doubles as the retention window,
+ * so unlike the Postgres store there is no table to prune.
  *
  * The effect's context is `undefined`: Redis gives no transaction, so the effect
  * and the "done" record do NOT commit atomically. Use this store when the effect
@@ -58,6 +66,7 @@ const MAX_CLAIM_ATTEMPTS = 50;
 export function createRedisStore(redis: RedisLike, options: RedisStoreOptions = {}): IdempotencyStore<undefined> {
   const prefix = options.keyPrefix ?? "eow:";
   const ttlMs = (options.ttlSeconds ?? 86_400) * 1000;
+  const pendingTtlMs = (options.pendingTtlSeconds ?? 30) * 1000;
   const pollIntervalMs = options.pollIntervalMs ?? 25;
   const maxWaitMs = options.maxWaitMs ?? 5000;
 
@@ -69,18 +78,23 @@ export function createRedisStore(redis: RedisLike, options: RedisStoreOptions = 
     // lapsed). The cap turns a deterministically failing effect into a clear error
     // instead of an unbounded retry.
     for (let attempt = 1; attempt <= MAX_CLAIM_ATTEMPTS; attempt++) {
-      const claimed = await redis.setClaim(k, PENDING, ttlMs);
+      const claimed = await redis.setClaim(k, PENDING, pendingTtlMs);
       if (claimed) {
+        let result: T;
         try {
-          const result = await effect(undefined);
-          await redis.setValue(k, JSON.stringify({ s: "done", r: result ?? null }), ttlMs);
-          return { status: "processed", result };
+          result = await effect(undefined);
         } catch (err) {
-          // Release the key so a later delivery retries, mirroring the Postgres
-          // store's rollback.
+          // The effect threw: release the key so a later delivery retries,
+          // mirroring the Postgres store's rollback.
           await redis.del(k).catch(() => {});
           throw err;
         }
+        // The effect succeeded. Record the result under the full dedup window. If
+        // THIS write fails, do NOT delete the claim — the effect already ran, so
+        // freeing the key would re-run it. Leave the short-lived pending claim to
+        // expire on its own and surface the error.
+        await redis.setValue(k, JSON.stringify({ s: "done", r: result ?? null }), ttlMs);
+        return { status: "processed", result };
       }
 
       // Someone else holds the key. Poll until they write the result, or until the
