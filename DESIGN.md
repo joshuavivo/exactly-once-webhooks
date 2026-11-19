@@ -131,7 +131,7 @@ These are the things a reviewer should know going in. None are hidden.
 2. **The memory store is unbounded unless you pass `maxEntries`.** With it, the
    store only dedups within its window: an evicted key, re-delivered, runs again.
    Size the window above the number of distinct events inside the retry window.
-2a. **The Redis store is not transactional with your effect.** Postgres runs the
+3. **The Redis store is not transactional with your effect.** Postgres runs the
    effect and the "done" record in one transaction, so they commit together or not
    at all. Redis has no such transaction here: the effect runs, *then* the result
    is written. If the process dies in between, the key is left `pending` and the
@@ -140,17 +140,18 @@ These are the things a reviewer should know going in. None are hidden.
    requirement. For an effect that must be atomic with a database write, use the
    Postgres store. Its dedup is also windowed by the TTL, like the bounded memory
    store.
-3. **Stored results must be JSON-serialisable** (Postgres round-trips `result`
+4. **Stored results must be JSON-serialisable** (Postgres round-trips `result`
    through JSON). Return plain data, not class instances or functions.
-4. **A slow effect holds a row lock and a pooled connection for its whole
+5. **A slow effect holds a row lock and a pooled connection for its whole
    duration** in the Postgres store, because the effect runs inside the
    transaction. Keep effects short; do slow, non-transactional work after `run`
    returns, keyed by the result it hands back.
-5. **Retry-on-rollback recurses.** A waiter that finds the holder rolled back
-   calls `run` again. Under pathological, sustained contention on one key this
-   could retry repeatedly; in practice one delivery wins quickly. There is no
-   artificial retry cap — the contention is self-limiting because only one holder
-   exists at a time.
+6. **A holder that keeps rolling back is bounded, then errors.** When a holder's
+   effect throws, its claim is released and the next caller retries. This is a
+   bounded loop (`MAX_CLAIM_ATTEMPTS`, 50), not unbounded recursion: a key whose
+   effect fails deterministically raises a clear error after the cap rather than
+   retrying forever. Under healthy contention one delivery wins immediately and the
+   cap is never approached.
 
 ## Testing
 
