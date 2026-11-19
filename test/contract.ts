@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { IdempotencyStore } from "../src/index.ts";
+import type { IdempotencyStore, Outcome } from "../src/index.ts";
 
 // The behavioural contract every IdempotencyStore must satisfy, written once and
 // run against every implementation. This is what `types.ts` means by "any store
@@ -104,23 +104,35 @@ export function runContract({ label, makeStore, makeKey }: ContractHarness): voi
     assert.deepEqual(retry, { status: "processed", result: "ok" });
   });
 
-  test(`[${label}] when the first concurrent effect fails, a waiter retries`, async () => {
+  test(`[${label}] when the first of several concurrent effects fails, the effect reruns exactly once`, async () => {
     const store = await makeStore();
     const key = makeKey("fail_race");
-    let attempts = 0;
+    let started = 0;
+    let succeeded = 0;
     const effect = async () => {
-      attempts += 1;
+      const mine = ++started;
       await wait(5);
-      if (attempts === 1) throw new Error("first attempt fails");
+      if (mine === 1) throw new Error("first attempt fails");
+      succeeded += 1;
       return "recovered";
     };
 
+    // Four concurrent deliveries; the first attempt throws. Exactly ONE of the
+    // waiters may rerun the effect — not each of them. Three-plus waiters is what
+    // exposes a post-failure re-check that is a single look instead of a loop.
     const settled = await Promise.allSettled([
+      store.run(key, effect),
+      store.run(key, effect),
       store.run(key, effect),
       store.run(key, effect),
     ]);
 
+    assert.equal(succeeded, 1, `the effect succeeded ${succeeded} times; it must rerun exactly once`);
     const fulfilled = settled.filter((s) => s.status === "fulfilled");
-    assert.ok(fulfilled.length >= 1, "at least one caller ended up with a result");
+    assert.equal(fulfilled.length, 3, "the three non-failing callers each get the one result");
+    const processed = fulfilled.filter(
+      (s) => (s as PromiseFulfilledResult<Outcome<unknown>>).value.status === "processed",
+    );
+    assert.equal(processed.length, 1, "exactly one caller processed the rerun; the rest are duplicates");
   });
 }
