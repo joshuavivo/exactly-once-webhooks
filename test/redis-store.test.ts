@@ -13,6 +13,35 @@ runContract({
   makeKey: (name) => name, // a fresh fake per store, so names are already unique
 });
 
+// The Redis store also runs the SAME contract against a real Redis when REDIS_URL
+// is set (CI sets it via a service container). Keys are prefixed per run so a
+// durable server does not collide across runs.
+const redisUrl = process.env.REDIS_URL;
+if (redisUrl) {
+  const runId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  let client: { set: (k: string, v: string, o: { NX?: boolean; PX?: number }) => Promise<string | null>; get: (k: string) => Promise<string | null>; del: (k: string) => Promise<number>; quit?: () => Promise<unknown> } | null = null;
+  const connect = async () => {
+    if (!client) {
+      const specifier = "redis";
+      const mod = (await import(specifier)) as { createClient: (o: { url: string }) => { connect: () => Promise<unknown> } };
+      const c = mod.createClient({ url: redisUrl });
+      await c.connect();
+      client = c as unknown as NonNullable<typeof client>;
+    }
+    return client;
+  };
+  runContract({
+    label: "redis-real",
+    makeStore: async () => createRedisStore(fromNodeRedis(await connect()), { keyPrefix: `eow:${runId}:`, pollIntervalMs: 2 }),
+    makeKey: (name) => name,
+  });
+  test("close the redis client", async () => {
+    if (client?.quit) await client.quit();
+  });
+} else {
+  test("redis-real contract (skipped: set REDIS_URL to run)", { skip: true }, () => {});
+}
+
 // Redis-specific behaviour the other stores do not have.
 
 test("a thrown effect deletes the key, leaving nothing to dedup against", async () => {
@@ -66,6 +95,28 @@ test("a waiter that times out throws rather than hanging forever", async () => {
   // A second caller finds the key pending and must time out.
   await assert.rejects(() => store.run("k", async () => "never"), /timed out/);
   void holder; // intentionally never resolves
+});
+
+test("a failed result write leaves the claim (so the effect is not re-run immediately)", async () => {
+  // The effect succeeds but the result write (setValue) fails. The claim must NOT
+  // be deleted — deleting it would free the key and re-run an effect that already
+  // ran. It is left to expire on its own pending lease, and the error surfaces.
+  const held = new Map<string, string>();
+  const redis: RedisLike = {
+    async setClaim(key, value) {
+      if (held.has(key)) return false;
+      held.set(key, value);
+      return true;
+    },
+    async setValue() { throw new Error("redis write failed"); },
+    async get(key) { return held.get(key) ?? null; },
+    async del(key) { held.delete(key); },
+  };
+  let runs = 0;
+  const store = createRedisStore(redis);
+  await assert.rejects(() => store.run("k", async () => { runs += 1; return "ok"; }), /redis write failed/);
+  assert.equal(runs, 1, "the effect ran once");
+  assert.equal(held.size, 1, "the claim was left in place, not deleted");
 });
 
 test("a key that can never be claimed or read gives up with a bounded error", async () => {

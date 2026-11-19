@@ -19,10 +19,11 @@ export type Outcome<T> = {
 
 /**
  * A place that remembers which keys have been handled and serialises concurrent
- * calls for the same key. Two implementations ship with the library: an
- * in-memory one (for tests and single-process use) and a Postgres one (for real,
- * multi-process deployments). Any store that honours the contract in
- * test/contract.ts is a valid implementation — both ship implementations run it.
+ * calls for the same key. Three implementations ship with the library: in-memory
+ * (tests and single-process use), Postgres (atomic with a DB effect, across
+ * processes) and Redis (across processes, for idempotent effects). Any store that
+ * honours the contract in test/contract.ts is a valid implementation — all three
+ * ship implementations run it.
  */
 export interface IdempotencyStore<Ctx = unknown> {
   /**
