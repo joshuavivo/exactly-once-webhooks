@@ -1,7 +1,7 @@
 {
   "name": "exactly-once-webhooks",
-  "version": "0.5.1",
-  "description": "Process payment webhooks exactly once, even when they are delivered twice or arrive at the same moment. In-memory and Postgres stores.",
+  "version": "0.6.0",
+  "description": "Process payment webhooks exactly once, even when they are delivered twice or arrive at the same moment. In-memory, Postgres and Redis stores.",
   "type": "module",
   "exports": {
     ".": {
@@ -9,7 +9,13 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "src", "schema.sql", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "src",
+    "schema.sql",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "test": "node --test",
     "typecheck": "tsc --noEmit",
@@ -29,6 +35,9 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "@types/pg": "^8.23.1",
+    "pg": "^8.23.1",
+    "redis": "^4.7.1",
     "typescript": "^5.7.2"
   }
 }
