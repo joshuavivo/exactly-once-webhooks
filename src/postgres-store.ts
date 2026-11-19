@@ -32,6 +32,12 @@ export type PostgresStoreOptions = {
  *
  * Requires the schema in schema.sql (a table with a UNIQUE/PRIMARY KEY `key`).
  */
+// Cap on claim retries. A retry only happens when a holder rolled back, after
+// which the next caller normally claims immediately — so reaching this many means
+// an effect is failing deterministically, which should surface as an error, not an
+// unbounded spin. Generous enough never to trip under healthy contention.
+const MAX_CLAIM_ATTEMPTS = 50;
+
 export function createPostgresStore(pool: Pool, options: PostgresStoreOptions = {}): IdempotencyStore<Queryable> {
   const table = options.table ?? "idempotency_keys";
   // The table name comes from the application, never from event data; it is not
@@ -41,54 +47,60 @@ export function createPostgresStore(pool: Pool, options: PostgresStoreOptions = 
   }
 
   async function run<T>(key: string, effect: (ctx: Queryable) => Promise<T>): Promise<Outcome<T>> {
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
+    // A loop, not recursion: each pass either resolves the key or retries because a
+    // holder rolled back. Bounded so a key whose holder fails deterministically
+    // raises a clear error instead of recursing/spinning without end.
+    for (let attempt = 1; attempt <= MAX_CLAIM_ATTEMPTS; attempt++) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
 
-      // Claim the key. ON CONFLICT DO NOTHING means only the first inserter gets
-      // a row back; everyone else gets zero rows and knows to wait.
-      const claimed = await client.query(
-        `INSERT INTO ${table} (key, status) VALUES ($1, 'pending')
-         ON CONFLICT (key) DO NOTHING
-         RETURNING key`,
-        [key],
-      );
+        // Claim the key. ON CONFLICT DO NOTHING means only the first inserter gets
+        // a row back; everyone else gets zero rows and knows to wait.
+        const claimed = await client.query(
+          `INSERT INTO ${table} (key, status) VALUES ($1, 'pending')
+           ON CONFLICT (key) DO NOTHING
+           RETURNING key`,
+          [key],
+        );
 
-      if (claimed.rows.length === 1) {
-        const result = await effect(client);
-        await client.query(
-          `UPDATE ${table} SET status = 'done', result = $2, completed_at = now() WHERE key = $1`,
-          [key, JSON.stringify(result ?? null)],
+        if (claimed.rows.length === 1) {
+          const result = await effect(client);
+          await client.query(
+            `UPDATE ${table} SET status = 'done', result = $2, completed_at = now() WHERE key = $1`,
+            [key, JSON.stringify(result ?? null)],
+          );
+          await client.query("COMMIT");
+          return { status: "processed", result };
+        }
+
+        // Someone else holds the key. FOR UPDATE blocks until their transaction
+        // ends: on their COMMIT the row is 'done'; on their ROLLBACK (the effect
+        // threw) no row is visible.
+        const seen = await client.query(
+          `SELECT status, result FROM ${table} WHERE key = $1 FOR UPDATE`,
+          [key],
         );
         await client.query("COMMIT");
-        return { status: "processed", result };
-      }
 
-      // Someone else holds the key. FOR UPDATE blocks until their transaction
-      // ends: on their COMMIT we read status = 'done'; on their ROLLBACK (the
-      // effect threw) the row is gone and we retry as the first caller.
-      const seen = await client.query(
-        `SELECT status, result FROM ${table} WHERE key = $1 FOR UPDATE`,
-        [key],
-      );
-      await client.query("COMMIT");
-
-      const row = seen.rows[0];
-      if (!row) {
-        // The holder rolled back (effect threw) and the row is gone: retry.
-        return run(key, effect);
+        const row = seen.rows[0];
+        if (row && row.status === "done") {
+          return { status: "duplicate", result: row.result as T };
+        }
+        // No committed row: a committed row is always 'done' (the 'pending' state
+        // only exists inside the holder's uncommitted transaction), so an absent
+        // row means the holder rolled back. Retry as the first caller next pass.
+      } catch (err) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw err;
+      } finally {
+        client.release();
       }
-      if (row.status === "done") {
-        return { status: "duplicate", result: row.result as T };
-      }
-      // Stuck pending with the holder gone mid-flight: retry.
-      return run(key, effect);
-    } catch (err) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw err;
-    } finally {
-      client.release();
     }
+    throw new Error(
+      `could not claim key ${JSON.stringify(key)} after ${MAX_CLAIM_ATTEMPTS} attempts; ` +
+        "its holder keeps rolling back (a deterministically failing effect?)",
+    );
   }
 
   return { run };

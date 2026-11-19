@@ -70,6 +70,23 @@ test("pruneExpiredKeys issues a windowed DELETE and returns the row count", asyn
   assert.deepEqual(calls[0]!.params, [604_800]);
 });
 
+test("a claim that never resolves gives up with a bounded error, not an infinite loop", async () => {
+  // The INSERT always loses the claim (0 rows) and the SELECT always finds no
+  // committed row (holder rolled back), so every pass retries. The loop is bounded.
+  const fakeClient = {
+    async query(sql: string) {
+      void sql;
+      return { rows: [] as Array<Record<string, unknown>> }; // BEGIN/INSERT/SELECT/COMMIT all empty
+    },
+    release() {},
+  };
+  const fakePool = { async connect() { return fakeClient; } } as unknown as Pool;
+  await assert.rejects(
+    () => createPostgresStore(fakePool).run("k", async () => "x"),
+    /after \d+ attempts/,
+  );
+});
+
 test("pruneExpiredKeys rejects a bad table name and a negative window", async () => {
   const fakePool = { async connect() { throw new Error("unused"); } } as unknown as Pool;
   await assert.rejects(() => pruneExpiredKeys(fakePool, { olderThanSeconds: 1, table: "t; drop" }), /invalid table name/);
