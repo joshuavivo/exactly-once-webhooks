@@ -127,6 +127,7 @@ export function runContract({ label, makeStore, makeKey }: ContractHarness): voi
       store.run(key, effect),
     ]);
 
+    assert.equal(started, 2, `the effect ran ${started} times; it must run twice (one failure, one rerun)`);
     assert.equal(succeeded, 1, `the effect succeeded ${succeeded} times; it must rerun exactly once`);
     const fulfilled = settled.filter((s) => s.status === "fulfilled");
     assert.equal(fulfilled.length, 3, "the three non-failing callers each get the one result");

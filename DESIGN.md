@@ -64,10 +64,14 @@ the transaction's client as its context — so its writes join the same atom.
 
 The claim is a single atomic `SET key value NX PX` — only the first caller sets the
 key; everyone else gets "already set" and polls the key until it holds the result.
-If the effect throws, the holder deletes the key so a later delivery retries. The
-TTL (`PX`) is doing double duty: it is both the dedup window and the retention
-policy, so unlike the Postgres store there is no table to prune — Redis forgets the
-key on its own once the window passes.
+The claim is written with a short **`pendingTtl`** (default 30s), so a holder that
+crashes mid-effect frees the key in seconds rather than for the whole dedup window;
+on success the key is rewritten with the full `ttlSeconds`. If the effect throws,
+the holder deletes the key so a later delivery retries. If the *result write* fails
+after the effect already succeeded, the holder does **not** delete the key — that
+would re-run an effect that ran — it leaves the short-lived claim to expire and
+surfaces the error. The completed TTL doubles as the retention policy, so unlike
+the Postgres store there is no table to prune.
 
 What it buys over Postgres: no connection held open for the effect's duration, no
 retention job, and Redis-speed claims. What it gives up is in the limitations below.
@@ -134,19 +138,27 @@ These are the things a reviewer should know going in. None are hidden.
 3. **The Redis store is not transactional with your effect.** Postgres runs the
    effect and the "done" record in one transaction, so they commit together or not
    at all. Redis has no such transaction here: the effect runs, *then* the result
-   is written. If the process dies in between, the key is left `pending` and the
-   next delivery (after the pending TTL) retries — so the Redis store is for
-   effects that are themselves idempotent, or where the dedup window is the whole
-   requirement. For an effect that must be atomic with a database write, use the
-   Postgres store. Its dedup is also windowed by the TTL, like the bounded memory
-   store.
-4. **Stored results must be JSON-serialisable** (Postgres round-trips `result`
+   is written. If the process dies in between, the key's short `pendingTtl`
+   (default 30s) lapses and the next delivery re-runs the effect — so the Redis
+   store is for effects that are themselves idempotent, or where the dedup window
+   is the whole requirement. For an effect that must be atomic with a database
+   write, use the Postgres store.
+4. **A Redis claim has no ownership token.** `pendingTtl` must exceed the effect's
+   worst-case duration. If the effect runs longer than `pendingTtl`, the claim
+   expires mid-flight, another caller can claim and run the effect, and the first
+   caller's `del`/write can then act on a claim it no longer owns. Set `pendingTtl`
+   above the longest effect, or use the Postgres store. A compare-and-delete token
+   (Lua) to close this fully is on the roadmap. Redis eviction policies
+   (`allkeys-*`/`volatile-*`) can also drop a claim under memory pressure.
+5. **Stored results must be JSON-serialisable** (Postgres round-trips `result`
    through JSON). Return plain data, not class instances or functions.
-5. **A slow effect holds a row lock and a pooled connection for its whole
+6. **A slow effect holds a row lock and a pooled connection for its whole
    duration** in the Postgres store, because the effect runs inside the
    transaction. Keep effects short; do slow, non-transactional work after `run`
-   returns, keyed by the result it hands back.
-6. **A holder that keeps rolling back is bounded, then errors.** When a holder's
+   returns, keyed by the result it hands back. Several waiters each hold their own
+   pooled connection while blocked, so one hot key can starve a small pool; a
+   `lock_timeout`/`statement_timeout` to bound that is on the roadmap.
+7. **A holder that keeps rolling back is bounded, then errors.** When a holder's
    effect throws, its claim is released and the next caller retries. This is a
    bounded loop (`MAX_CLAIM_ATTEMPTS`, 50), not unbounded recursion: a key whose
    effect fails deterministically raises a clear error after the cap rather than
@@ -155,7 +167,7 @@ These are the things a reviewer should know going in. None are hidden.
 
 ## Testing
 
-Both stores are held to one shared behavioural contract in
+All three stores are held to one shared behavioural contract in
 [`test/contract.ts`](test/contract.ts): process-once, dedup across repeat
 deliveries, the concurrent double-credit race, independent keys, and retry after a
 thrown effect. The memory store runs it on every push with no services. The

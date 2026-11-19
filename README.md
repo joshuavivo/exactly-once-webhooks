@@ -37,7 +37,7 @@ await Promise.all([
 balance; // 100 — credited once, not five times
 ```
 
-That test is in `test/memory-store.test.ts` and runs on every push.
+That test is the shared contract in `test/contract.ts` that every store runs, and it runs on every push.
 
 ## Using it on a webhook endpoint
 
@@ -142,11 +142,13 @@ const client = createClient(); await client.connect();
 const store = createRedisStore(fromNodeRedis(client));
 ```
 
-Unlike the Postgres store, the Redis store is **not** transactional with your
-effect — the effect runs, then the result is written. Use it when the effect is
-itself idempotent, or when the dedup window is the whole requirement; use Postgres
-when your write must be atomic with the "handled" record. [`DESIGN.md`](DESIGN.md)
-spells this out.
+The claim is written with a short `pendingTtlSeconds` (default 30) so a crashed
+holder frees the key in seconds, not for the whole dedup window; `pendingTtlSeconds`
+must exceed your effect's worst-case duration. Unlike the Postgres store, the Redis
+store is **not** transactional with your effect — the effect runs, then the result
+is written. Use it when the effect is itself idempotent, or when the dedup window is
+the whole requirement; use Postgres when your write must be atomic with the
+"handled" record. [`DESIGN.md`](DESIGN.md) spells out the trade-offs.
 
 ## What this is not
 
@@ -179,7 +181,7 @@ DATABASE_URL=postgres://eow:eow@localhost:5433/eow npm test
 docker compose down
 ```
 
-Both stores are held to the one shared contract in [`test/contract.ts`](test/contract.ts).
+All three stores are held to the one shared contract in [`test/contract.ts`](test/contract.ts).
 
 ## Credits
 
