@@ -47,6 +47,18 @@ commit together or roll back together. There is no interval where the money move
 but the event was not recorded, or the reverse. That is why the effect is handed
 the transaction's client as its context — so its writes join the same atom.
 
+### Redis store — across processes, when the effect is idempotent
+
+The claim is a single atomic `SET key value NX PX` — only the first caller sets the
+key; everyone else gets "already set" and polls the key until it holds the result.
+If the effect throws, the holder deletes the key so a later delivery retries. The
+TTL (`PX`) is doing double duty: it is both the dedup window and the retention
+policy, so unlike the Postgres store there is no table to prune — Redis forgets the
+key on its own once the window passes.
+
+What it buys over Postgres: no connection held open for the effect's duration, no
+retention job, and Redis-speed claims. What it gives up is in the limitations below.
+
 ### Memory store — for one process
 
 No database, so the serialisation is a per-key promise. The first caller for a key
@@ -104,6 +116,15 @@ These are the things a reviewer should know going in. None are hidden.
 2. **The memory store is unbounded unless you pass `maxEntries`.** With it, the
    store only dedups within its window: an evicted key, re-delivered, runs again.
    Size the window above the number of distinct events inside the retry window.
+2a. **The Redis store is not transactional with your effect.** Postgres runs the
+   effect and the "done" record in one transaction, so they commit together or not
+   at all. Redis has no such transaction here: the effect runs, *then* the result
+   is written. If the process dies in between, the key is left `pending` and the
+   next delivery (after the pending TTL) retries — so the Redis store is for
+   effects that are themselves idempotent, or where the dedup window is the whole
+   requirement. For an effect that must be atomic with a database write, use the
+   Postgres store. Its dedup is also windowed by the TTL, like the bounded memory
+   store.
 3. **Stored results must be JSON-serialisable** (Postgres round-trips `result`
    through JSON). Return plain data, not class instances or functions.
 4. **A slow effect holds a row lock and a pooled connection for its whole

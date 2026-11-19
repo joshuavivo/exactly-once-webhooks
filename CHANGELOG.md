@@ -6,6 +6,21 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0]
+
+### Added
+- **Redis store** — `createRedisStore(redis, options?)`, a third implementation
+  that passes the same `test/contract.ts` as the memory and Postgres stores. The
+  claim is an atomic `SET ... NX PX`; the TTL is both the dedup window and the
+  retention policy, so there is nothing to prune. `fromNodeRedis(client)` adapts a
+  node-redis v4+ client. Documented honestly: unlike Postgres it is **not**
+  transactional with the effect, so it is for idempotent effects or when the dedup
+  window suffices (see DESIGN.md).
+- `test/fake-redis.ts`, an in-process stand-in modelling `SET NX PX` + TTL, so the
+  Redis contract runs with no services.
+
+## [0.2.0]
+
 ### Added
 - **Shared behavioural contract** (`test/contract.ts`) that every store
   implementation runs — process-once, dedup across repeat deliveries, the
