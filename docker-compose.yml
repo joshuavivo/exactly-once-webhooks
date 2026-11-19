@@ -1,0 +1,25 @@
+# One command to run the Postgres-backed tests against a real database:
+#
+#   docker compose up -d
+#   DATABASE_URL=postgres://eow:eow@localhost:5433/eow npm test
+#   docker compose down
+#
+# The in-memory tests need none of this — `npm test` alone runs the full
+# behavioural contract against the memory store. This is only for exercising the
+# Postgres store's locking against a live server.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: eow
+      POSTGRES_PASSWORD: eow
+      POSTGRES_DB: eow
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eow -d eow"]
+      interval: 2s
+      timeout: 3s
+      retries: 15

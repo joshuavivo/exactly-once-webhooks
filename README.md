@@ -101,10 +101,17 @@ Runs `effect` at most once for `key`.
 Use the event's own id as the key — the thing the provider guarantees is stable
 across retries.
 
-### `createMemoryStore()`
+### `createMemoryStore(options?)`
 
 A store that lives in one process. Good for tests and single-process apps; it
 does **not** share state across servers. The effect's context is `undefined`.
+
+Pass `{ maxEntries }` to bound its memory: once more than `maxEntries` keys have
+completed, the least-recently-completed one is forgotten. A forgotten key is no
+longer deduplicated, so set the cap above the number of distinct events you expect
+inside the provider's retry window. Without it the store keeps every key forever —
+fine for a short-lived process, unbounded for a long-running one. In-flight keys
+are never evicted.
 
 ### `createPostgresStore(pool, options?)`
 
@@ -122,14 +129,29 @@ writes join the same transaction.
 - Not a dependency to be scared of — it is a few hundred lines with no runtime
   dependencies, and you can read all of it.
 
+## Design and limitations
+
+[`DESIGN.md`](DESIGN.md) states the guarantee precisely (exactly-once *processing*
+on an at-least-once *delivery* channel), walks through the two race conditions each
+store closes, and — importantly — lists what this library does **not** do: table
+growth needs a retention job, the memory store only dedups within its window, slow
+effects hold a lock, and stored results must be JSON-serialisable. Read it before
+putting real money through this.
+
 ## Development
 
 ```
 npm install
-npm test            # node --test, no database needed
+npm test            # node --test, runs the full contract against the memory store
 npm run typecheck
-DATABASE_URL=postgres://... npm test   # also runs the Postgres tests
+
+# Run the same contract against a real Postgres:
+docker compose up -d
+DATABASE_URL=postgres://eow:eow@localhost:5433/eow npm test
+docker compose down
 ```
+
+Both stores are held to the one shared contract in [`test/contract.ts`](test/contract.ts).
 
 ## Credits
 
