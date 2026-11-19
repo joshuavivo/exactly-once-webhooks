@@ -68,6 +68,20 @@ test("a waiter that times out throws rather than hanging forever", async () => {
   void holder; // intentionally never resolves
 });
 
+test("a key that can never be claimed or read gives up with a bounded error", async () => {
+  // Pathological: the claim is always lost (setClaim false) yet the key is never
+  // readable (get null), so every pass reclaims. Before the bound this recursed
+  // forever; now it must throw after MAX_CLAIM_ATTEMPTS.
+  const stuck: RedisLike = {
+    async setClaim() { return false; },
+    async setValue() {},
+    async get() { return null; },
+    async del() {},
+  };
+  const store = createRedisStore(stuck, { pollIntervalMs: 0 });
+  await assert.rejects(() => store.run("k", async () => "x"), /after \d+ attempts/);
+});
+
 test("fromNodeRedis maps the four operations onto a node-redis-shaped client", async () => {
   const data = new Map<string, string>();
   const client = {
