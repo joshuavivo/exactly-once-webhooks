@@ -7,3 +7,9 @@ export {
   type Queryable,
   type PostgresStoreOptions,
 } from "./postgres-store.ts";
+export {
+  createRedisStore,
+  fromNodeRedis,
+  type RedisLike,
+  type RedisStoreOptions,
+} from "./redis-store.ts";

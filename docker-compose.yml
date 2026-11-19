@@ -1,12 +1,12 @@
-# One command to run the Postgres-backed tests against a real database:
+# One command to run the Postgres- and Redis-backed tests against real servers:
 #
 #   docker compose up -d
-#   DATABASE_URL=postgres://eow:eow@localhost:5433/eow npm test
+#   DATABASE_URL=postgres://eow:eow@localhost:5433/eow REDIS_URL=redis://localhost:6380 npm test
 #   docker compose down
 #
-# The in-memory tests need none of this — `npm test` alone runs the full
-# behavioural contract against the memory store. This is only for exercising the
-# Postgres store's locking against a live server.
+# The in-memory and fake-Redis tests need none of this — `npm test` alone runs the
+# full behavioural contract against the memory store and the Redis store (via an
+# in-process fake). This is only for exercising the real servers' semantics.
 services:
   postgres:
     image: postgres:16-alpine
@@ -20,6 +20,15 @@ services:
       - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U eow -d eow"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 2s
       timeout: 3s
       retries: 15

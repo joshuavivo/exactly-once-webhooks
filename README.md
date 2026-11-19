@@ -9,8 +9,9 @@ the customer, the customer is credited two or three times. Worse, two deliveries
 can land at the same instant and race past a naive "have I seen this yet?" check.
 
 This library ties the work to the event's own id and lets the storage layer
-guarantee it runs once — with a Postgres store that holds up across many servers,
-and an in-memory store for tests and single-process use.
+guarantee it runs once — with a Postgres store that holds up across many servers, a
+Redis store for when the effect is idempotent, and an in-memory store for tests and
+single-process use.
 
 ```
 npm install exactly-once-webhooks
@@ -119,6 +120,28 @@ A store backed by Postgres and safe across processes. `pool` is anything with th
 small `connect()` / `query()` shape `pg` provides. `options.table` defaults to
 `"idempotency_keys"`. The effect's context is the transaction's client, so your
 writes join the same transaction.
+
+### `createRedisStore(redis, options?)`
+
+A store backed by Redis and safe across processes. The claim is an atomic
+`SET ... NX PX`; the TTL (`options.ttlSeconds`, default one day) is both the dedup
+window and the retention policy, so there is nothing to prune. `redis` is a small
+four-method shape (`setClaim`/`setValue`/`get`/`del`); `fromNodeRedis(client)`
+adapts a node-redis v4+ client to it:
+
+```ts
+import { createClient } from "redis";
+import { createRedisStore, fromNodeRedis } from "exactly-once-webhooks";
+
+const client = createClient(); await client.connect();
+const store = createRedisStore(fromNodeRedis(client));
+```
+
+Unlike the Postgres store, the Redis store is **not** transactional with your
+effect — the effect runs, then the result is written. Use it when the effect is
+itself idempotent, or when the dedup window is the whole requirement; use Postgres
+when your write must be atomic with the "handled" record. [`DESIGN.md`](DESIGN.md)
+spells this out.
 
 ## What this is not
 
