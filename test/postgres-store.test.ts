@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createPostgresStore, type Pool } from "../src/postgres-store.ts";
+import { createPostgresStore, pruneExpiredKeys, type Pool } from "../src/postgres-store.ts";
 import { runContract } from "./contract.ts";
 
 // These tests run against a real Postgres only when DATABASE_URL is set, so CI
@@ -47,6 +47,33 @@ test("createPostgresStore rejects an unsafe table name", () => {
     () => createPostgresStore(fakePool, { table: "oops; drop table users" }),
     /invalid table name/,
   );
+});
+
+// pruneExpiredKeys, verified against a fake pool (no database): the DELETE is
+// windowed with a bound parameter, and the deleted count is returned.
+test("pruneExpiredKeys issues a windowed DELETE and returns the row count", async () => {
+  const calls: Array<{ sql: string; params?: unknown[] }> = [];
+  const fakeClient = {
+    async query(sql: string, params?: unknown[]) {
+      calls.push({ sql, params });
+      return { rows: [], rowCount: 3 };
+    },
+    release() {},
+  };
+  const fakePool = { async connect() { return fakeClient; } } as unknown as Pool;
+
+  const deleted = await pruneExpiredKeys(fakePool, { olderThanSeconds: 7 * 86_400 });
+
+  assert.equal(deleted, 3);
+  assert.match(calls[0]!.sql, /DELETE FROM idempotency_keys/);
+  assert.match(calls[0]!.sql, /make_interval\(secs => \$1\)/);
+  assert.deepEqual(calls[0]!.params, [604_800]);
+});
+
+test("pruneExpiredKeys rejects a bad table name and a negative window", async () => {
+  const fakePool = { async connect() { throw new Error("unused"); } } as unknown as Pool;
+  await assert.rejects(() => pruneExpiredKeys(fakePool, { olderThanSeconds: 1, table: "t; drop" }), /invalid table name/);
+  await assert.rejects(() => pruneExpiredKeys(fakePool, { olderThanSeconds: -1 }), /non-negative/);
 });
 
 // Keep the pool from holding the process open after a DATABASE_URL run.

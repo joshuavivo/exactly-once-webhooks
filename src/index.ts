@@ -2,6 +2,7 @@ export type { IdempotencyStore, Outcome } from "./types.ts";
 export { createMemoryStore } from "./memory-store.ts";
 export {
   createPostgresStore,
+  pruneExpiredKeys,
   type Pool,
   type PoolClient,
   type Queryable,
