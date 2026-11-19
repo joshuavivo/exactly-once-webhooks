@@ -56,16 +56,19 @@ export function createMemoryStore(options: MemoryStoreOptions = {}): Idempotency
     key: string,
     effect: (ctx: undefined) => Promise<T>,
   ): Promise<Outcome<T>> {
-    const existing = entries.get(key);
-    if (existing) {
-      // Wait for the in-flight (or finished) attempt to settle, then look again.
-      await existing.settled;
-      const after = entries.get(key);
-      if (after && after.status === "done") {
-        return { status: "duplicate", result: after.result as T };
+    // Wait out any in-flight attempt before claiming. This is a LOOP, not a single
+    // re-check: when a holder's effect throws it frees the key and wakes every
+    // waiter, and exactly one of them must re-claim while the rest wait on that NEW
+    // holder. A single look (checking only for "done") would let every waiter fall
+    // through and run the effect too — the concurrent double-run this store exists
+    // to stop. Re-examining each pass keeps it to one.
+    for (;;) {
+      const existing = entries.get(key);
+      if (!existing) break; // no holder: we are the one that claims, below
+      if (existing.status === "done") {
+        return { status: "duplicate", result: existing.result as T };
       }
-      // The earlier attempt threw and removed itself, or its done-entry was
-      // evicted; fall through and retry as if we were the first caller.
+      await existing.settled; // pending: wait, then look again (done / gone / a new holder)
     }
 
     // Claim the key. This block runs synchronously up to `await effect()`, so no
