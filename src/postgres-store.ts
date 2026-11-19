@@ -93,3 +93,40 @@ export function createPostgresStore(pool: Pool, options: PostgresStoreOptions = 
 
   return { run };
 }
+
+/**
+ * Delete processed keys older than `olderThanSeconds`, to keep the table from
+ * growing forever. Run it on a schedule (a cron, a worker) with a window well
+ * past your provider's retry window — a key pruned too early stops deduplicating a
+ * still-possible redelivery. Returns the number of rows deleted.
+ *
+ * This is the retention job the Postgres store needs and the Redis store does not
+ * (Redis expires keys by TTL on its own). It is intentionally a plain `DELETE`, so
+ * you can run the SQL yourself instead:
+ *
+ *   DELETE FROM idempotency_keys
+ *   WHERE completed_at IS NOT NULL AND completed_at < now() - interval '7 days';
+ */
+export async function pruneExpiredKeys(
+  pool: Pool,
+  options: { olderThanSeconds: number; table?: string },
+): Promise<number> {
+  const table = options.table ?? "idempotency_keys";
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(table)) {
+    throw new Error(`invalid table name: ${JSON.stringify(table)}`);
+  }
+  if (!Number.isFinite(options.olderThanSeconds) || options.olderThanSeconds < 0) {
+    throw new Error("olderThanSeconds must be a non-negative number");
+  }
+  const client = await pool.connect();
+  try {
+    // make_interval keeps the window a bound parameter, never string-concatenated SQL.
+    const res = await client.query(
+      `DELETE FROM ${table} WHERE completed_at IS NOT NULL AND completed_at < now() - make_interval(secs => $1)`,
+      [options.olderThanSeconds],
+    );
+    return (res as { rowCount?: number | null }).rowCount ?? 0;
+  } finally {
+    client.release();
+  }
+}
