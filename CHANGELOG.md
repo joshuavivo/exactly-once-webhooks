@@ -6,6 +6,24 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0]
+
+### Changed
+- **Claim retries are now a bounded loop, not unbounded recursion.** When a holder's
+  effect throws, the next caller retries to claim the key; the Postgres and Redis
+  stores did this by recursing (`return run(...)`) with no cap. They now loop up to
+  `MAX_CLAIM_ATTEMPTS` (50) and raise a clear error if a holder keeps rolling back
+  (a deterministically failing effect), instead of recursing/spinning forever. No
+  change under healthy contention, where one delivery wins immediately. Each store
+  has a test proving the bound fires. (Raised by an external code review.)
+- Corrected a misleading comment in the Postgres store: a committed row is always
+  `done` (the `pending` state only exists inside the holder's uncommitted
+  transaction), so an absent row means the holder rolled back.
+
+### Fixed
+- `DESIGN.md` limitations renumbered (dropped the stray `2a`); the retry limitation
+  now describes the bounded loop instead of unbounded recursion.
+
 ## [0.4.0]
 
 ### Added
