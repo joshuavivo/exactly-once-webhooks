@@ -121,6 +121,11 @@ small `connect()` / `query()` shape `pg` provides. `options.table` defaults to
 `"idempotency_keys"`. The effect's context is the transaction's client, so your
 writes join the same transaction.
 
+Keep the table from growing forever with `pruneExpiredKeys(pool, { olderThanSeconds })`
+on a schedule — it deletes processed keys older than a window you choose (set it
+past your provider's retry window). The Redis store needs no pruning; its TTL
+expires keys on its own.
+
 ### `createRedisStore(redis, options?)`
 
 A store backed by Redis and safe across processes. The claim is an atomic
