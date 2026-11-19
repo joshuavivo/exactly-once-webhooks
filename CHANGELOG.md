@@ -6,6 +6,22 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.1]
+
+### Fixed
+- **Concurrent double-run in the memory store.** When a holder's effect threw while
+  three or more callers waited on the same key, the post-failure re-check looked for
+  a `done` entry exactly once, so every waiter fell through and ran the effect — the
+  concurrent-duplicate bug this library exists to stop. Measured: four deliveries
+  with the first failing ran the effect four times. The re-check is now a loop:
+  exactly one waiter re-claims and the rest wait on it. (Found by an adversarial
+  code review; the Postgres and Redis stores were never affected — their claim is
+  atomic in the database / via `SET NX`.)
+- The contract's failure-race test was too weak to catch the above (two callers, a
+  `>= 1` assertion). It now runs four concurrent callers and asserts the effect
+  reruns *exactly once* with exactly one `processed` result. It fails on the old
+  memory store and passes on the fix.
+
 ## [0.5.0]
 
 ### Changed
