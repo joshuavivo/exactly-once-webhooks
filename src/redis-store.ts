@@ -36,6 +36,11 @@ export type RedisStoreOptions = {
 const PENDING = JSON.stringify({ s: "pending" });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// Cap on claim retries (a retry only happens when the holder's key vanished). High
+// enough never to trip under healthy contention; reaching it means an effect is
+// failing deterministically, which should error rather than spin forever.
+const MAX_CLAIM_ATTEMPTS = 50;
+
 /**
  * Redis-backed store, safe across processes.
  *
@@ -59,38 +64,45 @@ export function createRedisStore(redis: RedisLike, options: RedisStoreOptions = 
   async function run<T>(key: string, effect: (ctx: undefined) => Promise<T>): Promise<Outcome<T>> {
     const k = prefix + key;
 
-    const claimed = await redis.setClaim(k, PENDING, ttlMs);
-    if (claimed) {
-      try {
-        const result = await effect(undefined);
-        await redis.setValue(k, JSON.stringify({ s: "done", r: result ?? null }), ttlMs);
-        return { status: "processed", result };
-      } catch (err) {
-        // Release the key so a later delivery retries, mirroring the Postgres
-        // store's rollback.
-        await redis.del(k).catch(() => {});
-        throw err;
+    // A bounded loop, not recursion: each pass either claims the key, reads the
+    // holder's result, or retries because the key vanished (holder failed / TTL
+    // lapsed). The cap turns a deterministically failing effect into a clear error
+    // instead of an unbounded retry.
+    for (let attempt = 1; attempt <= MAX_CLAIM_ATTEMPTS; attempt++) {
+      const claimed = await redis.setClaim(k, PENDING, ttlMs);
+      if (claimed) {
+        try {
+          const result = await effect(undefined);
+          await redis.setValue(k, JSON.stringify({ s: "done", r: result ?? null }), ttlMs);
+          return { status: "processed", result };
+        } catch (err) {
+          // Release the key so a later delivery retries, mirroring the Postgres
+          // store's rollback.
+          await redis.del(k).catch(() => {});
+          throw err;
+        }
       }
-    }
 
-    // Someone else holds the key. Wait for them to write the result.
-    const start = Date.now();
-    for (;;) {
-      const raw = await redis.get(k);
-      if (raw === null) {
-        // The holder failed (deleted the key) or the TTL lapsed mid-flight:
-        // retry as the first caller.
-        return run(key, effect);
+      // Someone else holds the key. Poll until they write the result, or until the
+      // key vanishes (holder failed / TTL lapsed) and we retry to reclaim it.
+      const start = Date.now();
+      for (;;) {
+        const raw = await redis.get(k);
+        if (raw === null) break; // holder gone → reclaim on the next attempt
+        const parsed = JSON.parse(raw) as { s: "pending" | "done"; r?: unknown };
+        if (parsed.s === "done") {
+          return { status: "duplicate", result: parsed.r as T };
+        }
+        if (Date.now() - start > maxWaitMs) {
+          throw new Error(`timed out after ${maxWaitMs}ms waiting for key ${JSON.stringify(key)}`);
+        }
+        await sleep(pollIntervalMs);
       }
-      const parsed = JSON.parse(raw) as { s: "pending" | "done"; r?: unknown };
-      if (parsed.s === "done") {
-        return { status: "duplicate", result: parsed.r as T };
-      }
-      if (Date.now() - start > maxWaitMs) {
-        throw new Error(`timed out after ${maxWaitMs}ms waiting for key ${JSON.stringify(key)}`);
-      }
-      await sleep(pollIntervalMs);
     }
+    throw new Error(
+      `could not claim key ${JSON.stringify(key)} after ${MAX_CLAIM_ATTEMPTS} attempts; ` +
+        "its holder keeps failing (a deterministically failing effect?)",
+    );
   }
 
   return { run };
