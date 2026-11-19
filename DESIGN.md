@@ -118,8 +118,7 @@ The important corollary, and a real sharp edge:
   call more than once; your framework still receives, acks, and (on a thrown
   error) returns non-2xx so the provider retries.
 - **Not a signature verifier.** Verify the provider's signature *before* calling
-  `run` — pair it with a signature check (see
-  [webhook-signatures](https://github.com/joshuavivo/webhook-signatures)).
+  `run` — pair it with a signature check.
 
 ## Known limitations
 
