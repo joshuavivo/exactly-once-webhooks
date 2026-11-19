@@ -8,13 +8,49 @@ type Entry = {
   settled: Promise<void>;
 };
 
+export type MemoryStoreOptions = {
+  /**
+   * Cap on how many *completed* keys to remember. Once exceeded, the
+   * least-recently-completed key is forgotten. A forgotten key is no longer
+   * deduplicated — a later delivery of it runs the effect again — so set this
+   * above the number of distinct events you expect inside the provider's retry
+   * window. `undefined` (the default) keeps every key forever: safe only for a
+   * short-lived process, because the map grows without bound otherwise.
+   *
+   * In-flight (pending) keys are never evicted; eviction would break the
+   * serialisation guarantee for calls already waiting on them.
+   */
+  maxEntries?: number;
+};
+
 /**
  * In-memory store. Correct for a single process (tests, a CLI, one server with
  * no replicas). It does NOT share state across processes — for that use the
  * Postgres store. The context passed to the effect is `undefined`.
  */
-export function createMemoryStore(): IdempotencyStore<undefined> {
+export function createMemoryStore(options: MemoryStoreOptions = {}): IdempotencyStore<undefined> {
+  const maxEntries = options.maxEntries;
+  if (maxEntries !== undefined && (!Number.isInteger(maxEntries) || maxEntries < 1)) {
+    throw new Error(`maxEntries must be a positive integer, got ${JSON.stringify(maxEntries)}`);
+  }
+
+  // Insertion order of a Map is iteration order. A completed key is re-inserted
+  // at the end, so the front of the map is the least-recently-completed key —
+  // the one to drop first when we are over the cap.
   const entries = new Map<string, Entry>();
+
+  function evictIfNeeded(): void {
+    if (maxEntries === undefined) return;
+    let done = 0;
+    for (const e of entries.values()) if (e.status === "done") done += 1;
+    for (const [key, entry] of entries) {
+      if (done <= maxEntries) break;
+      if (entry.status === "done") {
+        entries.delete(key);
+        done -= 1;
+      }
+    }
+  }
 
   async function run<T>(
     key: string,
@@ -28,8 +64,8 @@ export function createMemoryStore(): IdempotencyStore<undefined> {
       if (after && after.status === "done") {
         return { status: "duplicate", result: after.result as T };
       }
-      // The earlier attempt threw and removed itself; fall through and retry as
-      // if we were the first caller.
+      // The earlier attempt threw and removed itself, or its done-entry was
+      // evicted; fall through and retry as if we were the first caller.
     }
 
     // Claim the key. This block runs synchronously up to `await effect()`, so no
@@ -42,7 +78,11 @@ export function createMemoryStore(): IdempotencyStore<undefined> {
 
     try {
       const result = await effect(undefined);
+      // Re-insert at the tail so the map's order is completion order (for LRU
+      // eviction), then trim back to the cap.
+      entries.delete(key);
       entries.set(key, { status: "done", result, settled });
+      evictIfNeeded();
       return { status: "processed", result };
     } catch (err) {
       entries.delete(key); // allow a later delivery to retry

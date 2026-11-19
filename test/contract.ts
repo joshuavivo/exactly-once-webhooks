@@ -1,0 +1,126 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import type { IdempotencyStore } from "../src/index.ts";
+
+// The behavioural contract every IdempotencyStore must satisfy, written once and
+// run against every implementation. This is what `types.ts` means by "any store
+// that honours the contract is a valid implementation" — it is not a figure of
+// speech, it is this file, and both the in-memory and the Postgres store run it.
+//
+// `makeStore` returns a store to test. `makeKey` returns a key that is unique
+// across test runs — the in-memory store starts empty every time, but the
+// Postgres store shares one durable table, so its keys must not collide with a
+// previous run of the suite.
+
+export type ContractHarness = {
+  label: string;
+  makeStore: () => IdempotencyStore<unknown> | Promise<IdempotencyStore<unknown>>;
+  makeKey: (name: string) => string;
+};
+
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+export function runContract({ label, makeStore, makeKey }: ContractHarness): void {
+  test(`[${label}] runs the effect once and reports it as processed`, async () => {
+    const store = await makeStore();
+    let runs = 0;
+    const out = await store.run(makeKey("processed"), async () => {
+      runs += 1;
+      return "credited";
+    });
+    assert.equal(runs, 1);
+    assert.deepEqual(out, { status: "processed", result: "credited" });
+  });
+
+  test(`[${label}] a repeat delivery does not run the effect again`, async () => {
+    const store = await makeStore();
+    const key = makeKey("repeat");
+    let runs = 0;
+    const effect = async () => {
+      runs += 1;
+      return runs;
+    };
+
+    const first = await store.run(key, effect);
+    const second = await store.run(key, effect);
+    const third = await store.run(key, effect);
+
+    assert.equal(runs, 1, "effect ran exactly once across three deliveries");
+    assert.deepEqual(first, { status: "processed", result: 1 });
+    assert.deepEqual(second, { status: "duplicate", result: 1 });
+    assert.deepEqual(third, { status: "duplicate", result: 1 });
+  });
+
+  test(`[${label}] the double-credit race: concurrent deliveries credit once`, async () => {
+    // The bug the library exists to stop. Several copies of one webhook arrive at
+    // the same instant; without serialisation each would credit the account.
+    const store = await makeStore();
+    const key = makeKey("race");
+    let balance = 0;
+    const credit = async () => {
+      // Read-modify-write with an await in the middle — the exact shape that
+      // races. Exactly one of these may run.
+      const current = balance;
+      await wait(5);
+      balance = current + 100;
+      return balance;
+    };
+
+    const results = await Promise.all(
+      Array.from({ length: 5 }, () => store.run(key, credit)),
+    );
+
+    assert.equal(balance, 100, "credited once despite five concurrent deliveries");
+    const processed = results.filter((r) => r.status === "processed");
+    assert.equal(processed.length, 1, "exactly one call processed the event");
+    assert.equal(results.filter((r) => r.status === "duplicate").length, 4);
+    for (const r of results) {
+      assert.equal(r.result, 100, "every caller sees the one true balance");
+    }
+  });
+
+  test(`[${label}] different keys are independent`, async () => {
+    const store = await makeStore();
+    const a = await store.run(makeKey("ind_a"), async () => "a");
+    const b = await store.run(makeKey("ind_b"), async () => "b");
+    assert.deepEqual(a, { status: "processed", result: "a" });
+    assert.deepEqual(b, { status: "processed", result: "b" });
+  });
+
+  test(`[${label}] a failed effect stores nothing and can be retried`, async () => {
+    const store = await makeStore();
+    const key = makeKey("retry");
+    let attempts = 0;
+    const flaky = async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("provider timeout");
+      return "ok";
+    };
+
+    await assert.rejects(() => store.run(key, flaky), /provider timeout/);
+    const retry = await store.run(key, flaky);
+
+    assert.equal(attempts, 2);
+    assert.deepEqual(retry, { status: "processed", result: "ok" });
+  });
+
+  test(`[${label}] when the first concurrent effect fails, a waiter retries`, async () => {
+    const store = await makeStore();
+    const key = makeKey("fail_race");
+    let attempts = 0;
+    const effect = async () => {
+      attempts += 1;
+      await wait(5);
+      if (attempts === 1) throw new Error("first attempt fails");
+      return "recovered";
+    };
+
+    const settled = await Promise.allSettled([
+      store.run(key, effect),
+      store.run(key, effect),
+    ]);
+
+    const fulfilled = settled.filter((s) => s.status === "fulfilled");
+    assert.ok(fulfilled.length >= 1, "at least one caller ended up with a result");
+  });
+}

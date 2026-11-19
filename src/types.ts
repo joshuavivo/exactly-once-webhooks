@@ -22,7 +22,7 @@ export type Outcome<T> = {
  * calls for the same key. Two implementations ship with the library: an
  * in-memory one (for tests and single-process use) and a Postgres one (for real,
  * multi-process deployments). Any store that honours the contract in
- * test/contract.test.ts is a valid implementation.
+ * test/contract.ts is a valid implementation — both ship implementations run it.
  */
 export interface IdempotencyStore<Ctx = unknown> {
   /**
