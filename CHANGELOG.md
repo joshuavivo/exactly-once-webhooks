@@ -6,6 +6,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0]
+
+### Added
+- `pruneExpiredKeys(pool, { olderThanSeconds, table? })` — the retention job the
+  Postgres store's "table grows forever" limitation points to. A windowed `DELETE`
+  with a bound parameter; returns the number of rows removed. Tested against a fake
+  pool (no database).
+- `SECURITY.md` (private disclosure), a `Makefile` (`make check`, `make db-test`),
+  and a Mermaid flow diagram in `DESIGN.md`.
+
 ## [0.3.0]
 
 ### Added

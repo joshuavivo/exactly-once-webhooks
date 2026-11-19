@@ -16,6 +16,19 @@ is the *effect* — crediting the account, inserting the ledger row, calling the
 downstream API. This library moves the once-ness from the network (impossible) to
 the storage layer (a solved problem), keyed by the event's own stable id.
 
+```mermaid
+flowchart TD
+  D1["delivery #1<br/>event evt_123"] --> R["store.run(evt_123, effect)"]
+  D2["delivery #2<br/>same event, racing"] --> R
+  R --> C{claim evt_123<br/>atomic: one winner}
+  C -- won --> E["run effect<br/>(in the same txn, for Postgres)"]
+  E --> M["record result"]
+  M --> OK["processed"]
+  C -- lost / already done --> W["wait for the winner,<br/>then read the stored result"]
+  W --> DUP["duplicate<br/>(effect NOT run again)"]
+  E -. effect throws .-> REL["release the claim → retryable"]
+```
+
 Two distinct failure modes have to be closed, and they are not the same bug:
 
 1. **Sequential duplicates.** The event arrives, is processed, and arrives again a
@@ -108,11 +121,13 @@ The important corollary, and a real sharp edge:
 
 These are the things a reviewer should know going in. None are hidden.
 
-1. **The Postgres table grows forever.** Every processed key is a row kept for
-   dedup. You need a retention job to prune keys older than your provider's retry
-   window (Stripe's is a few days). That pruning is out of scope here on purpose —
-   it is a one-line `DELETE ... WHERE completed_at < now() - interval '...'` cron,
-   and baking a policy in would be wrong for most callers.
+1. **The Postgres table grows forever without pruning.** Every processed key is a
+   row kept for dedup. Run `pruneExpiredKeys(pool, { olderThanSeconds })` on a
+   schedule (or the one-line `DELETE ... WHERE completed_at < now() - interval`) to
+   drop keys older than your provider's retry window. The library ships the helper
+   but not a policy — the window is yours to choose, and pruning too early stops
+   deduplicating a still-possible redelivery. (The Redis store needs none of this:
+   its TTL expires keys itself.)
 2. **The memory store is unbounded unless you pass `maxEntries`.** With it, the
    store only dedups within its window: an evicted key, re-delivered, runs again.
    Size the window above the number of distinct events inside the retry window.
