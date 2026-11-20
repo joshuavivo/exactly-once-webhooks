@@ -137,10 +137,12 @@ on a schedule — it deletes processed keys older than a window you choose (set 
 past your provider's retry window). The Redis store needs no pruning; its TTL
 expires keys on its own.
 
-Both the Postgres and Redis stores take an optional `onRetry({ key, attempt })`
-hook, called when a waiter has to retry because the holder failed. Point it at a
-log line or a counter to see contention, and a key whose effect fails every time,
-before it reaches the retry cap.
+The Redis store takes an optional `onRetry({ key, attempt })` hook, called when a
+waiter has to retry because the holder failed. Point it at a log line or a counter
+to see contention, and a key whose effect fails every time, before it reaches the
+retry cap. The Postgres store accepts the same hook, but it rarely fires there: a
+waiter's `INSERT` blocks on the holder's uncommitted row and takes the claim
+directly when the holder rolls back, so a rollback is not a retry.
 
 ### `createRedisStore(redis, options?)`
 

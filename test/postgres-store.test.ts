@@ -48,7 +48,12 @@ if (url) {
     },
     makeKey: (name) => `evt_pg_${runId}_${name}`,
   });
-  test("[postgres] onRetry reports a waiter retrying after the holder rolled back", async () => {
+  // Postgres hands a rolled-back claim straight to the waiter: the waiter's
+  // INSERT ... ON CONFLICT DO NOTHING blocks on the holder's uncommitted row and,
+  // when the holder rolls back, inserts and claims. No retry pass happens, so
+  // onRetry stays silent. (CI showed this; the first version of this test assumed
+  // a retry and failed. See the issue on the now-unreachable retry path.)
+  test("[postgres] a rolled-back claim passes straight to the blocked waiter, with no retry", async () => {
     const pool = await loadPool();
     if (!pool) throw new Error("DATABASE_URL set but pg could not be loaded");
     const retries: Array<{ key: string; attempt: number }> = [];
@@ -62,7 +67,7 @@ if (url) {
     await assert.rejects(holder, /holder failed/);
 
     assert.deepEqual(await waiter, { status: "processed", result: "second try" });
-    assert.deepEqual(retries, [{ key, attempt: 1 }]);
+    assert.deepEqual(retries, [], "no retry pass: the blocked INSERT took over the claim");
     await (pool as unknown as { end(): Promise<void> }).end();
   });
 
