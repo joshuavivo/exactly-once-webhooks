@@ -166,28 +166,32 @@ test("pruneExpiredKeys rejects a bad table name and a negative window", async ()
 // lockTimeoutMs, checked against a fake pool (no database).
 function recordingPool(onQuery: (sql: string) => { rows: Array<Record<string, unknown>> } | Error) {
   const sqls: string[] = [];
+  const params: unknown[][] = [];
   const client = {
-    async query(sql: string) {
+    async query(sql: string, values: unknown[] = []) {
       sqls.push(sql.replace(/\s+/g, " ").trim());
+      params.push(values);
       const r = onQuery(sql);
       if (r instanceof Error) throw r;
       return r;
     },
     release() {},
   };
-  return { sqls, pool: { async connect() { return client; } } as unknown as Pool };
+  return { sqls, params, pool: { async connect() { return client; } } as unknown as Pool };
 }
 
 test("lockTimeoutMs is set for the claim and reset before the effect runs", async () => {
-  const { sqls, pool } = recordingPool((sql) => (/INSERT/.test(sql) ? { rows: [{ key: "k" }] } : { rows: [] }));
+  const { sqls, params, pool } = recordingPool((sql) => (/INSERT/.test(sql) ? { rows: [{ key: "k" }] } : { rows: [] }));
   let seenBeforeEffect = 0;
   await createPostgresStore(pool, { lockTimeoutMs: 1234 }).run("k", async () => { seenBeforeEffect = sqls.length; return 1; });
   assert.deepEqual(sqls.slice(0, seenBeforeEffect), [
     "BEGIN",
-    "SET LOCAL lock_timeout = 1234",
+    // set_config(..., true) is SET LOCAL with the value bound, not spliced into the SQL.
+    "SELECT set_config('lock_timeout', $1, true)",
     "INSERT INTO idempotency_keys (key, status) VALUES ($1, 'pending') ON CONFLICT (key) DO NOTHING RETURNING key",
     "SET LOCAL lock_timeout TO DEFAULT",
   ]);
+  assert.deepEqual(params[1], ["1234"], "the timeout travels as a bound parameter, in ms");
 });
 
 test("a lock timeout (55P03) becomes a clear error and the transaction is rolled back", async () => {

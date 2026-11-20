@@ -6,6 +6,54 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Redis: a call whose claim expired mid-effect now says so.** It still returns
+  `status: "processed"` (the effect did run), plus `lostClaim: true`, because its
+  compare-and-set result write did not apply, so nothing was recorded. Either another
+  caller had taken the key over (the effect may have run twice) or nobody had (the
+  next delivery runs it again); DESIGN limitation 4. Before, the CAS outcome was
+  ignored and the call looked like a normal first run. `Outcome<T>` gains the
+  optional `lostClaim?: true`; the Postgres and memory stores never set it. Found in
+  an external review.
+
+### Changed
+- **Postgres: the claim's `lock_timeout` is now a bound parameter**
+  (`SELECT set_config('lock_timeout', $1, true)`, the parameterised form of
+  `SET LOCAL`) instead of a number spliced into the SQL. It was safe before
+  (`lockTimeoutMs` is validated as a non-negative integer), but it was the one
+  statement in the store built by string interpolation. Same behaviour; the
+  `lockTimeoutMs` test now also checks the bound value. Found in an external review.
+- **Memory store: completing a key no longer scans the whole map.** With
+  `maxEntries` set, every completion used to count all done entries before
+  evicting; it now keeps a running count, so the bookkeeping is O(1) and eviction
+  only walks past keys still in flight. Which key is evicted is unchanged, and a new
+  test pins that order across a failed effect and re-delivered keys. Locally, 40k
+  completions with a 20k cap went from ~1.0 s to ~0.08 s. Found in an external
+  review.
+
+### Fixed
+- **Redis: `pollIntervalMs` and `maxWaitMs` are validated when the store is
+  created**, like the TTLs already were. Before, `maxWaitMs: NaN` made a waiter
+  wait forever (`elapsed > NaN` is never true), a negative `maxWaitMs` gave up on
+  the first look, and a negative or NaN `pollIntervalMs` was silently treated as
+  ~1 ms. Now `pollIntervalMs` must be finite and non-negative, and `maxWaitMs`
+  non-negative (0 and `Infinity` still allowed), or `createRedisStore` throws with
+  the bad value in the message. Found in an external review.
+- **Docs: what the effect's `lock_timeout` actually is.** The code comment said the
+  effect gets "the session default"; `SET LOCAL lock_timeout TO DEFAULT` actually
+  restores the server or role default, so a `lock_timeout` the app `SET` on the
+  connection does not apply inside the effect (checked on Postgres 16: session
+  `5s` reads `0` inside the effect, `5s` again after commit). Behaviour unchanged
+  since 0.9.0; the comment is corrected and DESIGN limitation 6 says how to bound
+  the effect's own lock waits. Found by an adversarial review of this release.
+- **Example: replaying a dead letter that was parked as malformed is refused
+  cleanly.** `replay()` cast the parse result to an event without checking it, so
+  replaying a malformed letter threw a bare `TypeError` (`Cannot read properties of
+  undefined`) from inside the ledger write. Nothing was written and the letter was
+  kept, but the person replaying it got a crash, not a reason. It now returns
+  `400 still malformed: <reason>`, never runs the write, and keeps the letter. Found
+  in an external review.
+
 ## [0.9.0] - 2026-11-20
 
 ### Added

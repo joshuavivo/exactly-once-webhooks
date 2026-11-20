@@ -181,11 +181,28 @@ test("a holder whose claim expired does not overwrite the new holder's result", 
   assert.deepEqual(second, { status: "processed", result: "on-time" });
 
   const late = await slow;
-  assert.deepEqual(late, { status: "processed", result: "late" }, "the effect did run, and says so");
+  // The effect did run, and says so — and the caller can see its result was NOT
+  // recorded, because another caller took the key over mid-effect.
+  assert.deepEqual(late, { status: "processed", result: "late", lostClaim: true });
 
   // The record that stands is the new holder's, not the late writer's.
   const third = await store.run("evt", async () => "never");
   assert.deepEqual(third, { status: "duplicate", result: "on-time" });
+});
+
+test("a holder whose claim expired with no one taking over is flagged, and the key is free again", async () => {
+  const redis = createFakeRedis();
+  const store = createRedisStore(redis, { pendingTtlSeconds: 0.02, pollIntervalMs: 1 });
+  let runs = 0;
+
+  const late = await store.run("evt", async () => { runs += 1; await pause(60); return "late"; });
+  assert.deepEqual(late, { status: "processed", result: "late", lostClaim: true }, "nothing was recorded, and it says so");
+
+  // Nothing was recorded, so the next delivery runs the effect again. That is the
+  // case the flag exists to surface.
+  const next = await store.run("evt", async () => { runs += 1; return "again"; });
+  assert.deepEqual(next, { status: "processed", result: "again" });
+  assert.equal(runs, 2);
 });
 
 test("a holder whose claim expired does not delete the new holder's claim when it fails", async () => {
@@ -220,6 +237,21 @@ test("bad TTLs are refused when the store is created, not after an effect ran", 
     assert.throws(() => createRedisStore(r, { ttlSeconds: bad }), /ttlSeconds must be a positive number/);
     assert.throws(() => createRedisStore(r, { pendingTtlSeconds: bad }), /pendingTtlSeconds must be a positive number/);
   }
+});
+
+test("bad wait settings are refused when the store is created", () => {
+  // Unchecked, maxWaitMs: NaN never times out (`elapsed > NaN` is always false),
+  // a negative maxWaitMs gives up on the first look, and a NaN or negative
+  // pollIntervalMs is silently treated as ~1 ms.
+  const r = createFakeRedis();
+  for (const bad of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.throws(() => createRedisStore(r, { pollIntervalMs: bad }), new RegExp(`pollIntervalMs must be a finite, non-negative number of ms, got ${bad}$`));
+  }
+  for (const bad of [-1, Number.NaN]) {
+    assert.throws(() => createRedisStore(r, { maxWaitMs: bad }), new RegExp(`maxWaitMs must be a non-negative number of ms, got ${bad}$`));
+  }
+  assert.doesNotThrow(() => createRedisStore(r, { maxWaitMs: 0, pollIntervalMs: 0 }));
+  assert.doesNotThrow(() => createRedisStore(r, { maxWaitMs: Number.POSITIVE_INFINITY }), "Infinity still means: no wait limit");
 });
 
 test("fractional TTLs reach the adapter as whole milliseconds", async () => {

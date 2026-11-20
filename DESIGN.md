@@ -152,7 +152,12 @@ These are the things a reviewer should know going in. None are hidden.
    compare-and-set / compare-and-delete against its own token, so it can no longer
    overwrite the new holder's result or delete its claim (which used to let a
    *third* caller run as well). It cannot undo the second run itself — a lease
-   cannot. Set `pendingTtl` above the longest effect, or use the Postgres store.
+   cannot. What it can do is tell you: whenever a holder's claim expired before
+   its result write, its call returns `{ status: "processed", lostClaim: true }`.
+   That covers both outcomes of an expired claim: another caller took over (the
+   effect may have run twice), or nobody did and nothing was recorded (the next
+   delivery runs the effect again). Either way the one caller that knows sees it.
+   Set `pendingTtl` above the longest effect, or use the Postgres store.
    Redis eviction policies (`allkeys-*`/`volatile-*`) can also drop a claim under
    memory pressure.
 5. **Stored results must be JSON-serialisable** (Postgres round-trips `result`
@@ -166,7 +171,11 @@ These are the things a reviewer should know going in. None are hidden.
    transaction-local `lock_timeout` on the claim only): a waiter gives up with a
    clear error and frees its connection, and the provider's redelivery retries.
    Pool size still has to exceed your hot-key concurrency for the timeout to be
-   the limit rather than the pool.
+   the limit rather than the pool. Before the effect runs the claim timeout is
+   reset `TO DEFAULT`, which is the server or role default: a `lock_timeout` your
+   app `SET` on the connection does not apply inside the effect (it is back after
+   commit). To bound the effect's own lock waits, set it per role
+   (`ALTER ROLE ... SET lock_timeout`) or with `SET LOCAL` inside the effect.
 7. **A holder that rolls back hands the key straight to a waiter.** The waiter's
    `INSERT ... ON CONFLICT DO NOTHING` is blocked on the holder's uncommitted row;
    when the holder rolls back, the waiter's insert succeeds and it claims the key

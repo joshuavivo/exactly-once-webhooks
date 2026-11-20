@@ -99,7 +99,9 @@ other didn't.
 Runs `effect` at most once for `key`.
 
 - First call for a key: runs `effect`, stores the result, returns
-  `{ status: "processed", result }`.
+  `{ status: "processed", result }`. (Redis only: if the claim expired while the
+  effect ran, the result is not stored and the call adds `lostClaim: true`; see the
+  Redis store below.)
 - Later calls for the same key: return `{ status: "duplicate", result }` without
   running `effect` again.
 - Concurrent calls for the same key: exactly one runs the effect; the rest wait
@@ -172,7 +174,10 @@ const store = createRedisStore(fromNodeRedis(client));
 
 The claim is written with a short `pendingTtlSeconds` (default 30) so a crashed
 holder frees the key in seconds, not for the whole dedup window; `pendingTtlSeconds`
-must exceed your effect's worst-case duration. Unlike the Postgres store, the Redis
+must exceed your effect's worst-case duration. If an effect does outlive it, the late
+call still returns `processed` but with `lostClaim: true`: its result was not recorded,
+so the effect may have run twice already or will run again on the next delivery. Log or
+alert on that flag. Unlike the Postgres store, the Redis
 store is **not** transactional with your effect — the effect runs, then the result
 is written. Use it when the effect is itself idempotent, or when the dedup window is
 the whole requirement; use Postgres when your write must be atomic with the
