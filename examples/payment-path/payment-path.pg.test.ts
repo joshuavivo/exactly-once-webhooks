@@ -1,11 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { createPostgresStore, type Pool } from "../../src/index.ts";
 import { sign } from "./signature.ts";
 import { createPaymentHandler, type PaymentEvent } from "./handler.ts";
 import { applyToPgLedger, pgBalance } from "./pg-ledger.ts";
+import { loadSchema } from "../../test/pg-schema.ts";
 
 // The same path against a real Postgres: the ledger row and the idempotency
 // record in ONE transaction, and the database itself refusing edits. Runs when
@@ -21,11 +20,10 @@ async function connect(): Promise<Pool & { end(): Promise<void> }> {
   const specifier = "pg";
   const pg = (await import(specifier)) as { default: { Pool: new (c: { connectionString: string; max: number }) => unknown } };
   const pool = new pg.default.Pool({ connectionString: url!, max: 25 }) as Pool & { end(): Promise<void> };
-  const root = fileURLToPath(new URL("../../", import.meta.url));
   const c = await pool.connect();
   try {
-    await c.query(readFileSync(root + "schema.sql", "utf8"));
-    await c.query(readFileSync(root + "examples/payment-path/ledger.sql", "utf8"));
+    // Shared with the store tests, which load the schema in parallel: see pg-schema.ts.
+    await loadSchema(c, [new URL("../../schema.sql", import.meta.url), new URL("./ledger.sql", import.meta.url)]);
   } finally {
     c.release();
   }
