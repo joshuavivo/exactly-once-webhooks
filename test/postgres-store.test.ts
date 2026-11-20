@@ -71,6 +71,34 @@ if (url) {
     await (pool as unknown as { end(): Promise<void> }).end();
   });
 
+  test("[postgres] lockTimeoutMs: a slow holder can't starve the pool for other keys (#11)", async () => {
+    const specifier = "pg";
+    const pg = (await import(specifier)) as { default: { Pool: new (c: object) => unknown } };
+    // A deliberately tiny pool: the starvation case from the issue.
+    const pool = new pg.default.Pool({ connectionString: url, max: 2 }) as unknown as Pool & { end(): Promise<void> };
+    const store = createPostgresStore(pool, { lockTimeoutMs: 200 });
+    const hot = `evt_pg_${runId}_hot`;
+    const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const holder = store.run(hot, async () => { await gate; return "slow"; }); // connection 1, held
+    await pause(50);
+    const t0 = Date.now();
+    // The waiter takes connection 2 and blocks on the holder's row. It must give
+    // up after ~200 ms and hand its connection back...
+    await assert.rejects(() => store.run(hot, async () => "never"), /timed out after 200ms waiting for key/);
+    // ...so an unrelated key gets that connection promptly instead of queueing
+    // behind a wait with no end.
+    const other = await store.run(`evt_pg_${runId}_other`, async () => "ok");
+    assert.deepEqual(other, { status: "processed", result: "ok" });
+    assert.ok(Date.now() - t0 < 2000, `unrelated key waited ${Date.now() - t0} ms`);
+
+    release();
+    assert.deepEqual(await holder, { status: "processed", result: "slow" });
+    await pool.end();
+  });
+
   // Close the SHARED pool the contract used, or its open handles keep the process
   // alive and the CI job hangs. (Runs after the contract tests above.)
   test("close the postgres pool", async () => {
@@ -134,3 +162,60 @@ test("pruneExpiredKeys rejects a bad table name and a negative window", async ()
   await assert.rejects(() => pruneExpiredKeys(fakePool, { olderThanSeconds: -1 }), /non-negative/);
 });
 
+
+// lockTimeoutMs, checked against a fake pool (no database).
+function recordingPool(onQuery: (sql: string) => { rows: Array<Record<string, unknown>> } | Error) {
+  const sqls: string[] = [];
+  const client = {
+    async query(sql: string) {
+      sqls.push(sql.replace(/\s+/g, " ").trim());
+      const r = onQuery(sql);
+      if (r instanceof Error) throw r;
+      return r;
+    },
+    release() {},
+  };
+  return { sqls, pool: { async connect() { return client; } } as unknown as Pool };
+}
+
+test("lockTimeoutMs is set for the claim and reset before the effect runs", async () => {
+  const { sqls, pool } = recordingPool((sql) => (/INSERT/.test(sql) ? { rows: [{ key: "k" }] } : { rows: [] }));
+  let seenBeforeEffect = 0;
+  await createPostgresStore(pool, { lockTimeoutMs: 1234 }).run("k", async () => { seenBeforeEffect = sqls.length; return 1; });
+  assert.deepEqual(sqls.slice(0, seenBeforeEffect), [
+    "BEGIN",
+    "SET LOCAL lock_timeout = 1234",
+    "INSERT INTO idempotency_keys (key, status) VALUES ($1, 'pending') ON CONFLICT (key) DO NOTHING RETURNING key",
+    "SET LOCAL lock_timeout TO DEFAULT",
+  ]);
+});
+
+test("a lock timeout (55P03) becomes a clear error and the transaction is rolled back", async () => {
+  const timeout = Object.assign(new Error("canceling statement due to lock timeout"), { code: "55P03" });
+  const { sqls, pool } = recordingPool((sql) => (/INSERT/.test(sql) ? timeout : { rows: [] }));
+  await assert.rejects(
+    () => createPostgresStore(pool, { lockTimeoutMs: 50 }).run("k", async () => 1),
+    (e: Error) => /timed out after 50ms waiting for key "k"/.test(e.message) && (e as Error & { cause?: unknown }).cause === timeout,
+  );
+  assert.equal(sqls.at(-1), "ROLLBACK");
+});
+
+test("lockTimeoutMs must be a non-negative integer", () => {
+  const fakePool = { async connect() { throw new Error("unused"); } } as unknown as Pool;
+  for (const bad of [-1, 1.5, Number.NaN]) {
+    assert.throws(() => createPostgresStore(fakePool, { lockTimeoutMs: bad }), /lockTimeoutMs must be a non-negative integer/);
+  }
+  assert.doesNotThrow(() => createPostgresStore(fakePool, { lockTimeoutMs: 0 }));
+});
+
+test("the retry pass (a done row vanished before the read) reports onRetry and then claims (#24)", async () => {
+  let inserts = 0;
+  const retries: unknown[] = [];
+  const { pool } = recordingPool((sql) => {
+    if (/INSERT/.test(sql)) return { rows: inserts++ === 0 ? [] : [{ key: "k" }] }; // lost the first claim...
+    return { rows: [] }; // ...and the row was gone by the SELECT (pruned)
+  });
+  const out = await createPostgresStore(pool, { onRetry: (i) => retries.push(i) }).run("k", async () => "ran");
+  assert.deepEqual(out, { status: "processed", result: "ran" });
+  assert.deepEqual(retries, [{ key: "k", attempt: 1 }]);
+});
