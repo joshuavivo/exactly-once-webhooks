@@ -14,5 +14,5 @@
     "lib": ["ES2023"],
     "types": ["node"]
   },
-  "include": ["src", "test", "examples"]
+  "include": ["src", "test", "examples", "bench"]
 }
