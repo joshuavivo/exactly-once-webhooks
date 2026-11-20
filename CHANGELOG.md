@@ -6,6 +6,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`fromIoRedis(client)`** (closes #3): ioredis adapter using the same Lua
+  scripts as `fromNodeRedis`. The full shared contract runs against it through an
+  ioredis-shaped stub that checks the positional `SET` options and `eval` order.
+
 ### Changed
 - **Postgres: waits on another caller's claim are bounded** (closes #11). New
   `lockTimeoutMs` option, default **5000** (before: no limit; set `0` to keep

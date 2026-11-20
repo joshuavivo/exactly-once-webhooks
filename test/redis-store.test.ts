@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createRedisStore, fromNodeRedis, SET_IF_VALUE_LUA, DEL_IF_VALUE_LUA, type RedisLike } from "../src/redis-store.ts";
+import { createRedisStore, fromNodeRedis, fromIoRedis, SET_IF_VALUE_LUA, DEL_IF_VALUE_LUA, type RedisLike } from "../src/redis-store.ts";
 import { createFakeRedis } from "./fake-redis.ts";
 import { runContract } from "./contract.ts";
 
@@ -256,4 +256,36 @@ test("an onRetry hook that throws does not break the store", async () => {
   const waiter = store.run("evt", async () => "ok");
   await assert.rejects(holder, /holder failed/);
   assert.deepEqual(await waiter, { status: "processed", result: "ok" });
+});
+
+// fromIoRedis (issue #3): an ioredis-shaped stub that checks the positional SET
+// options and the (script, numKeys, ...keys, ...args) eval order, and applies the
+// two scripts' compare-then-write semantics. The full contract runs on top of it.
+function ioredisStub() {
+  const data = new Map<string, { v: string; exp: number }>();
+  const live = (k: string) => { const e = data.get(k); if (!e) return null; if (e.exp <= Date.now()) { data.delete(k); return null; } return e.v; };
+  return {
+    async set(key: string, value: string, px: "PX", ms: number, nx?: "NX") {
+      assert.equal(px, "PX");
+      assert.ok(Number.isInteger(ms) && ms > 0, `PX must be a positive integer, got ${ms}`);
+      if (nx === "NX" && live(key) !== null) return null;
+      data.set(key, { v: value, exp: Date.now() + ms });
+      return "OK";
+    },
+    async get(key: string) { return live(key); },
+    async eval(script: string, numKeys: number, ...rest: string[]) {
+      assert.equal(numKeys, 1);
+      const [key, expected, value, ms] = rest as [string, string, string?, string?];
+      if (live(key) !== expected) return 0;
+      if (script === SET_IF_VALUE_LUA) { data.set(key, { v: value!, exp: Date.now() + Number(ms) }); return 1; }
+      if (script === DEL_IF_VALUE_LUA) { data.delete(key); return 1; }
+      throw new Error("unexpected script");
+    },
+  };
+}
+
+runContract({
+  label: "redis-ioredis-adapter",
+  makeStore: () => createRedisStore(fromIoRedis(ioredisStub()), { pollIntervalMs: 2 }),
+  makeKey: (name) => name,
 });
