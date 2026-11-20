@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createRedisStore, fromNodeRedis, type RedisLike } from "../src/redis-store.ts";
+import { createRedisStore, fromNodeRedis, SET_IF_VALUE_LUA, DEL_IF_VALUE_LUA, type RedisLike } from "../src/redis-store.ts";
 import { createFakeRedis } from "./fake-redis.ts";
 import { runContract } from "./contract.ts";
 
@@ -19,7 +19,7 @@ runContract({
 const redisUrl = process.env.REDIS_URL;
 if (redisUrl) {
   const runId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  let client: { set: (k: string, v: string, o: { NX?: boolean; PX?: number }) => Promise<string | null>; get: (k: string) => Promise<string | null>; del: (k: string) => Promise<number>; quit?: () => Promise<unknown> } | null = null;
+  let client: Parameters<typeof fromNodeRedis>[0] & { quit?: () => Promise<unknown> } | null = null;
   const connect = async () => {
     if (!client) {
       const specifier = "redis";
@@ -84,9 +84,9 @@ test("a waiter that times out throws rather than hanging forever", async () => {
       held.set(key, value);
       return true;
     },
-    async setValue() { /* the stuck holder never calls this */ },
+    async setIfValue() { return false; /* the stuck holder never finishes */ },
     async get(key) { return held.get(key) ?? null; },
-    async del(key) { held.delete(key); },
+    async delIfValue(key) { return held.delete(key); },
   };
   const store = createRedisStore(stuck, { pollIntervalMs: 1, maxWaitMs: 20 });
 
@@ -98,7 +98,7 @@ test("a waiter that times out throws rather than hanging forever", async () => {
 });
 
 test("a failed result write leaves the claim (so the effect is not re-run immediately)", async () => {
-  // The effect succeeds but the result write (setValue) fails. The claim must NOT
+  // The effect succeeds but the result write (setIfValue) fails. The claim must NOT
   // be deleted — deleting it would free the key and re-run an effect that already
   // ran. It is left to expire on its own pending lease, and the error surfaces.
   const held = new Map<string, string>();
@@ -108,9 +108,9 @@ test("a failed result write leaves the claim (so the effect is not re-run immedi
       held.set(key, value);
       return true;
     },
-    async setValue() { throw new Error("redis write failed"); },
+    async setIfValue() { throw new Error("redis write failed"); },
     async get(key) { return held.get(key) ?? null; },
-    async del(key) { held.delete(key); },
+    async delIfValue(key) { return held.delete(key); },
   };
   let runs = 0;
   const store = createRedisStore(redis);
@@ -125,16 +125,21 @@ test("a key that can never be claimed or read gives up with a bounded error", as
   // forever; now it must throw after MAX_CLAIM_ATTEMPTS.
   const stuck: RedisLike = {
     async setClaim() { return false; },
-    async setValue() {},
+    async setIfValue() { return false; },
     async get() { return null; },
-    async del() {},
+    async delIfValue() { return false; },
   };
   const store = createRedisStore(stuck, { pollIntervalMs: 0 });
   await assert.rejects(() => store.run("k", async () => "x"), /after \d+ attempts/);
 });
 
 test("fromNodeRedis maps the four operations onto a node-redis-shaped client", async () => {
+  // A node-redis-shaped stub. Its eval() recognises the two exported scripts and
+  // applies their compare-then-write semantics, so the adapter's argument order
+  // (expected, value, ttl) is checked here; the scripts themselves run against a
+  // real Redis in the redis-real contract above.
   const data = new Map<string, string>();
+  const evals: string[] = [];
   const client = {
     async set(key: string, value: string, opts: { NX?: boolean; PX?: number }) {
       if (opts.NX && data.has(key)) return null;
@@ -142,11 +147,69 @@ test("fromNodeRedis maps the four operations onto a node-redis-shaped client", a
       return "OK";
     },
     async get(key: string) { return data.get(key) ?? null; },
-    async del(key: string) { const had = data.delete(key); return had ? 1 : 0; },
+    async eval(script: string, opts: { keys: string[]; arguments: string[] }) {
+      const key = opts.keys[0]!;
+      const expected = opts.arguments[0]!;
+      const value = opts.arguments[1]!;
+      if (data.get(key) !== expected) return 0;
+      if (script === SET_IF_VALUE_LUA) { evals.push("set"); data.set(key, value); return 1; }
+      if (script === DEL_IF_VALUE_LUA) { evals.push("del"); data.delete(key); return 1; }
+      throw new Error("unexpected script");
+    },
   };
   const store = createRedisStore(fromNodeRedis(client));
   const a = await store.run("evt", async () => "credited");
   const b = await store.run("evt", async () => "credited again");
   assert.deepEqual(a, { status: "processed", result: "credited" });
   assert.deepEqual(b, { status: "duplicate", result: "credited" });
+  assert.deepEqual(evals, ["set"], "the result was written through the compare-and-set script");
+});
+
+// Ownership token (issue #10). Both tests force the failure the token exists for:
+// the first holder's effect outlives its pendingTtl, so its claim expires and a
+// second caller claims the key while the first is still running.
+
+const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+test("a holder whose claim expired does not overwrite the new holder's result", async () => {
+  const redis = createFakeRedis();
+  const store = createRedisStore(redis, { pendingTtlSeconds: 0.02, pollIntervalMs: 1 });
+
+  const slow = store.run("evt", async () => { await pause(60); return "late"; });
+  await pause(35); // the slow holder's 20ms claim has lapsed
+  const second = await store.run("evt", async () => "on-time");
+  assert.deepEqual(second, { status: "processed", result: "on-time" });
+
+  const late = await slow;
+  assert.deepEqual(late, { status: "processed", result: "late" }, "the effect did run, and says so");
+
+  // The record that stands is the new holder's, not the late writer's.
+  const third = await store.run("evt", async () => "never");
+  assert.deepEqual(third, { status: "duplicate", result: "on-time" });
+});
+
+test("a holder whose claim expired does not delete the new holder's claim when it fails", async () => {
+  const redis = createFakeRedis();
+  const store = createRedisStore(redis, { pendingTtlSeconds: 0.02, pollIntervalMs: 1 });
+  let runs = 0;
+
+  const slowFail = store.run("evt", async () => { await pause(40); throw new Error("late failure"); });
+  await pause(30); // first claim has lapsed
+
+  // The second caller claims and is mid-effect when the first one fails.
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  const second = store.run("evt", async () => { runs += 1; await gate; return "second"; });
+  await assert.rejects(slowFail, /late failure/);
+
+  // Without the token, the failed holder's DEL would have freed the key here and
+  // this third caller would run the effect a second time.
+  assert.equal(redis._size(), 1, "the second holder's claim survived the late failure");
+  const third = store.run("evt", async () => { runs += 1; return "third"; });
+  await pause(5);
+  release();
+
+  assert.deepEqual(await second, { status: "processed", result: "second" });
+  assert.deepEqual(await third, { status: "duplicate", result: "second" });
+  assert.equal(runs, 1, "the effect ran once across the second and third callers");
 });
