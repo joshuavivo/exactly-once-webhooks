@@ -7,6 +7,10 @@ follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **`onRetry({ key, attempt })`** on the Postgres and Redis stores (closes #7):
+  fires when a waiter must retry because the holder failed, so contention and a
+  deterministically failing key are visible before the retry cap. Optional and a
+  no-op by default; a throwing hook is ignored.
 - **Benchmark** (`npm run bench`, `bench` workflow; closes #5): distinct-key
   throughput and p50/p99, and the hot-key case with an exactly-once assertion,
   on the memory store and real Postgres + Redis. Numbers in the README link the
