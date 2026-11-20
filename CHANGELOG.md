@@ -53,6 +53,13 @@ follow [Semantic Versioning](https://semver.org/).
   kept, but the person replaying it got a crash, not a reason. It now returns
   `400 still malformed: <reason>`, never runs the write, and keeps the letter. Found
   in an external review.
+- **Docs: where a losing caller waits on Postgres.** The README, DESIGN.md, the
+  schema.sql header and four code comments said the loser waits in
+  `SELECT ... FOR UPDATE`. It actually waits in its own
+  `INSERT ... ON CONFLICT DO NOTHING`, which blocks until the winner's transaction
+  ends; by the time it reads, the winner has finished. This is what limitation 7
+  already said; the earlier text now agrees with it. No code change. Found by an
+  adversarial review.
 
 ## [0.9.0] - 2026-11-20
 
