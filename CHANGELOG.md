@@ -16,6 +16,14 @@ follow [Semantic Versioning](https://semver.org/).
   optional `lostClaim?: true`; the Postgres and memory stores never set it. Found in
   an external review.
 
+### Changed
+- **Postgres: the claim's `lock_timeout` is now a bound parameter**
+  (`SELECT set_config('lock_timeout', $1, true)`, the parameterised form of
+  `SET LOCAL`) instead of a number spliced into the SQL. It was safe before
+  (`lockTimeoutMs` is validated as a non-negative integer), but it was the one
+  statement in the store built by string interpolation. Same behaviour; the
+  `lockTimeoutMs` test now also checks the bound value. Found in an external review.
+
 ### Fixed
 - **Redis: `pollIntervalMs` and `maxWaitMs` are validated when the store is
   created**, like the TTLs already were. Before, `maxWaitMs: NaN` made a waiter
