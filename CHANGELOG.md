@@ -32,6 +32,13 @@ follow [Semantic Versioning](https://semver.org/).
   ~1 ms. Now `pollIntervalMs` must be finite and non-negative, and `maxWaitMs`
   non-negative (0 and `Infinity` still allowed), or `createRedisStore` throws with
   the bad value in the message. Found in an external review.
+- **Docs: what the effect's `lock_timeout` actually is.** The code comment said the
+  effect gets "the session default"; `SET LOCAL lock_timeout TO DEFAULT` actually
+  restores the server or role default, so a `lock_timeout` the app `SET` on the
+  connection does not apply inside the effect (checked on Postgres 16: session
+  `5s` reads `0` inside the effect, `5s` again after commit). Behaviour unchanged
+  since 0.9.0; the comment is corrected and DESIGN limitation 6 says how to bound
+  the effect's own lock waits. Found by an adversarial review of this release.
 
 ## [0.9.0] - 2026-11-20
 

@@ -76,7 +76,7 @@ export function createPostgresStore(pool: Pool, options: PostgresStoreOptions = 
       try {
         await client.query("BEGIN");
         // Bound the wait on another caller's claim (issue #11). SET LOCAL lasts
-        // only for this transaction; it is reset before the effect runs.
+        // only for this transaction; it is dropped again before the effect runs.
         // set_config(name, value, is_local=true) is SET LOCAL with the value bound
         // as a parameter, so no number is ever spliced into the SQL text.
         await client.query("SELECT set_config('lock_timeout', $1, true)", [String(lockTimeoutMs)]);
@@ -91,8 +91,10 @@ export function createPostgresStore(pool: Pool, options: PostgresStoreOptions = 
         );
 
         if (claimed.rows.length === 1) {
-          // We hold the key. The effect's own statements get the session default,
-          // not our claim timeout.
+          // We hold the key. Drop our claim timeout so the effect's statements are
+          // not bound by it. TO DEFAULT means the server/role default, NOT a value
+          // the app SET on this connection: that one is back after COMMIT, but the
+          // effect itself runs without it (DESIGN.md, limitation 6).
           await client.query("SET LOCAL lock_timeout TO DEFAULT");
           const result = await effect(client);
           await client.query(
