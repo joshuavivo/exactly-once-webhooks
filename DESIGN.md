@@ -96,6 +96,60 @@ It is correct **only within one process**. It shares nothing across replicas and
 survives nothing across a restart. Use it for tests, a CLI, or a single
 unreplicated server — never as the dedup layer for a horizontally-scaled service.
 
+## Alternatives, and why this design doesn't use them
+
+The design above is easiest to judge against what it could have been. This
+section is the reasoning for the current shape, written after the fact. It is
+not a history of what was tried and in what order.
+
+- **Check, then insert** (`SELECT` the key; if absent, run the effect and
+  `INSERT`). This closes sequential duplicates only. Two concurrent deliveries
+  both see "absent" and both run the effect. See "The guarantee, stated
+  precisely" above.
+- **A plain `INSERT` and catch the unique violation.** The election is just as
+  atomic, but in Postgres the failed insert aborts the loser's transaction
+  (`current transaction is aborted, commands ignored until end of transaction
+  block`) unless it is wrapped in a savepoint, which costs a subtransaction and an
+  `ERROR` in the logs on every duplicate. `ON CONFLICT DO NOTHING RETURNING`
+  reports "not you" as zero rows with no error. Its insert has already waited for
+  the winner to finish, so the loser's next statement reads the winner's committed
+  result.
+- **An advisory lock** (`pg_advisory_xact_lock(hashtext(key))`). It serialises
+  callers, but it is a lock, not a record. You still need a row that says "done"
+  and holds the result, so it adds a second mechanism without removing the first.
+  And `hashtext` is 32-bit (`hashtextextended` is 64-bit): unrelated keys can,
+  rarely, share a lock and wait on each other.
+- **`SERIALIZABLE` isolation and retry.** Postgres would abort one of two
+  conflicting check-then-insert transactions, which is correct. But every caller
+  then needs a retry loop around the whole transaction, including the effect. And
+  correctness would depend on an isolation setting a caller can change, rather
+  than on the primary key, which they can't.
+- **Run the effect, then record the key** (outside one transaction). A crash
+  between the two leaves an effect that ran with no record, so the provider's
+  redelivery runs it again. Recording first and running after has the opposite
+  hole: a crash between them leaves a key marked handled that never ran. Postgres
+  avoids both by putting the effect and the record in one transaction. Redis
+  can't, which is why it records "pending" first and expires that claim (see
+  limitations 3 and 4).
+- **Redis with Redlock instead of a single `SET NX`.** Redlock spreads the claim
+  over several Redis nodes, but it is still a lease. An effect that outlives the
+  lease can still run twice. The ownership token is a compare-and-set check, not a
+  fencing token: a late holder can't overwrite or release a claim that isn't its
+  own, but nothing outside Redis checks it, so it can't fence the effect. That is
+  why the Redis store is for idempotent effects, and why it reports `lostClaim`
+  when its lease ran out.
+- **The provider's idempotency key.** That protects requests *you* send to the
+  provider, such as creating a charge. It does nothing for webhooks the provider
+  sends *you*. On this side, the event's own id is the key.
+
+What the library leaves to the caller, deliberately: an effect that calls an
+external API can't join the database transaction. The usual pattern is an outbox:
+write "call this API" as a row inside the effect's transaction, and have a separate
+worker send it with the provider's idempotency key. With the Postgres store, the
+library makes the row happen once. The provider's idempotency key makes the
+call's effect happen once, within the provider's key-retention window; the call
+itself may repeat.
+
 ## Handler-failure semantics
 
 If the effect throws, **nothing is persisted for the key** and the error is
