@@ -1,0 +1,44 @@
+name: bench
+# Runs bench/bench.ts against the memory store and real Postgres + Redis on a
+# GitHub-hosted runner and writes the results table to the run summary. The
+# README's numbers link to the run that produced them. Manual trigger, plus any
+# push or PR that touches the stores or the benchmark.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["src/**", "bench/**"]
+  pull_request:
+    paths: ["src/**", "bench/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: eow
+          POSTGRES_PASSWORD: eow
+          POSTGRES_DB: eow
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 2s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL: postgres://eow:eow@localhost:5432/eow
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run bench
