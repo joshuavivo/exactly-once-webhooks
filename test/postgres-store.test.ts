@@ -48,6 +48,24 @@ if (url) {
     },
     makeKey: (name) => `evt_pg_${runId}_${name}`,
   });
+  test("[postgres] onRetry reports a waiter retrying after the holder rolled back", async () => {
+    const pool = await loadPool();
+    if (!pool) throw new Error("DATABASE_URL set but pg could not be loaded");
+    const retries: Array<{ key: string; attempt: number }> = [];
+    const store = createPostgresStore(pool, { onRetry: (i) => retries.push(i) });
+    const key = `evt_pg_${runId}_onretry`;
+    const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    const holder = store.run(key, async () => { await pause(150); throw new Error("holder failed"); });
+    await pause(40); // holder has inserted its pending row; the waiter blocks on FOR UPDATE
+    const waiter = store.run(key, async () => "second try");
+    await assert.rejects(holder, /holder failed/);
+
+    assert.deepEqual(await waiter, { status: "processed", result: "second try" });
+    assert.deepEqual(retries, [{ key, attempt: 1 }]);
+    await (pool as unknown as { end(): Promise<void> }).end();
+  });
+
   // Close the SHARED pool the contract used, or its open handles keep the process
   // alive and the CI job hangs. (Runs after the contract tests above.)
   test("close the postgres pool", async () => {
