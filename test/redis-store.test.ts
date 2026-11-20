@@ -239,6 +239,21 @@ test("bad TTLs are refused when the store is created, not after an effect ran", 
   }
 });
 
+test("bad wait settings are refused when the store is created", () => {
+  // Unchecked, maxWaitMs: NaN never times out (`elapsed > NaN` is always false),
+  // a negative maxWaitMs gives up on the first look, and a NaN or negative
+  // pollIntervalMs is silently treated as ~1 ms.
+  const r = createFakeRedis();
+  for (const bad of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.throws(() => createRedisStore(r, { pollIntervalMs: bad }), new RegExp(`pollIntervalMs must be a finite, non-negative number of ms, got ${bad}$`));
+  }
+  for (const bad of [-1, Number.NaN]) {
+    assert.throws(() => createRedisStore(r, { maxWaitMs: bad }), new RegExp(`maxWaitMs must be a non-negative number of ms, got ${bad}$`));
+  }
+  assert.doesNotThrow(() => createRedisStore(r, { maxWaitMs: 0, pollIntervalMs: 0 }));
+  assert.doesNotThrow(() => createRedisStore(r, { maxWaitMs: Number.POSITIVE_INFINITY }), "Infinity still means: no wait limit");
+});
+
 test("fractional TTLs reach the adapter as whole milliseconds", async () => {
   const seen: number[] = [];
   const base = createFakeRedis();

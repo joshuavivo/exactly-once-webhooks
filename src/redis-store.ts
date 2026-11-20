@@ -90,8 +90,20 @@ export function createRedisStore(redis: RedisLike, options: RedisStoreOptions = 
   };
   const ttlMs = positive("ttlSeconds", options.ttlSeconds ?? 86_400);
   const pendingTtlMs = positive("pendingTtlSeconds", options.pendingTtlSeconds ?? 30);
+  // The wait settings too: unchecked, maxWaitMs NaN never times out (`elapsed > NaN`
+  // is always false), a negative one gives up on the first look, and a NaN or
+  // negative poll interval is silently treated as ~1 ms. 0 is allowed: re-check
+  // as fast as the event loop allows. maxWaitMs may be Infinity (wait for as long
+  // as the holder's claim lives); a poll interval may not (setTimeout treats
+  // Infinity as ~1 ms).
   const pollIntervalMs = options.pollIntervalMs ?? 25;
+  if (!Number.isFinite(pollIntervalMs) || pollIntervalMs < 0) {
+    throw new Error(`pollIntervalMs must be a finite, non-negative number of ms, got ${String(pollIntervalMs)}`);
+  }
   const maxWaitMs = options.maxWaitMs ?? 5000;
+  if (Number.isNaN(maxWaitMs) || maxWaitMs < 0) {
+    throw new Error(`maxWaitMs must be a non-negative number of ms, got ${String(maxWaitMs)}`);
+  }
 
   async function run<T>(key: string, effect: (ctx: undefined) => Promise<T>): Promise<Outcome<T>> {
     const k = prefix + key;

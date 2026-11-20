@@ -16,6 +16,15 @@ follow [Semantic Versioning](https://semver.org/).
   optional `lostClaim?: true`; the Postgres and memory stores never set it. Found in
   an external review.
 
+### Fixed
+- **Redis: `pollIntervalMs` and `maxWaitMs` are validated when the store is
+  created**, like the TTLs already were. Before, `maxWaitMs: NaN` made a waiter
+  wait forever (`elapsed > NaN` is never true), a negative `maxWaitMs` gave up on
+  the first look, and a negative or NaN `pollIntervalMs` was silently treated as
+  ~1 ms. Now `pollIntervalMs` must be finite and non-negative, and `maxWaitMs`
+  non-negative (0 and `Infinity` still allowed), or `createRedisStore` throws with
+  the bad value in the message. Found in an external review.
+
 ## [0.9.0] - 2026-11-20
 
 ### Added
