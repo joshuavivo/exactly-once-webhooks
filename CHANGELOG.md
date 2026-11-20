@@ -19,6 +19,25 @@ follow [Semantic Versioning](https://semver.org/).
   plus UNIQUE `event_id` and `reverses`. Tests for each step, on the memory store
   and (in CI) a real Postgres. `make example` runs the demo.
 
+### Fixed
+- Redis store: `ttlSeconds` / `pendingTtlSeconds` that are zero, negative or not
+  finite are refused at construction. Before, Redis rejected `PX 0` on the result
+  write, after the effect had run, so a redelivery ran it again. Milliseconds are
+  rounded up in the store instead of in each adapter.
+- payment-path example: a partial refund is dead-lettered instead of reversing the
+  whole charge; a refund that arrives before its charge is retried, not parked;
+  concurrent copies that fail together count as one failed delivery; a malformed
+  event delivered twice makes one dead letter; the refund lookup is ordered.
+
+### Changed
+- README install line: the package is installed from the GitHub release tarball
+  (it is not on the npm registry), and CI now installs that tarball into a fresh
+  project and imports it on every change. Docs corrected where they overclaimed:
+  Redis waiters time out after `maxWaitMs`; the Redis hot-key benchmark row uses a
+  tuned poll interval; "secret rotation" is the provider's; the ledger trigger is
+  a second line behind table grants. DESIGN's testing section now says Redis also
+  runs the contract against a real server.
+
 ## [0.7.0]
 
 ### Changed (breaking for custom `RedisLike` adapters)
