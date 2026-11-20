@@ -67,7 +67,10 @@ key; everyone else gets "already set" and polls the key until it holds the resul
 The claim is written with a short **`pendingTtl`** (default 30s), so a holder that
 crashes mid-effect frees the key in seconds rather than for the whole dedup window;
 on success the key is rewritten with the full `ttlSeconds`. If the effect throws,
-the holder deletes the key so a later delivery retries. If the *result write* fails
+the holder deletes the key so a later delivery retries. Every claim's value carries
+a random **ownership token**, and both of those writes are atomic compare-and-set /
+compare-and-delete Lua scripts against it: a holder only finalizes or releases a
+claim that is still its own. If the *result write* fails
 after the effect already succeeded, the holder does **not** delete the key — that
 would re-run an effect that ran — it leaves the short-lived claim to expire and
 surfaces the error. The completed TTL doubles as the retention policy, so unlike
@@ -142,13 +145,16 @@ These are the things a reviewer should know going in. None are hidden.
    store is for effects that are themselves idempotent, or where the dedup window
    is the whole requirement. For an effect that must be atomic with a database
    write, use the Postgres store.
-4. **A Redis claim has no ownership token.** `pendingTtl` must exceed the effect's
-   worst-case duration. If the effect runs longer than `pendingTtl`, the claim
-   expires mid-flight, another caller can claim and run the effect, and the first
-   caller's `del`/write can then act on a claim it no longer owns. Set `pendingTtl`
-   above the longest effect, or use the Postgres store. A compare-and-delete token
-   (Lua) to close this fully is on the roadmap. Redis eviction policies
-   (`allkeys-*`/`volatile-*`) can also drop a claim under memory pressure.
+4. **A Redis effect that outlives `pendingTtl` can run twice.** If the effect runs
+   longer than `pendingTtl`, the claim expires mid-flight and another caller can
+   claim the key and run the effect too. The ownership token (0.7.0) limits the
+   damage: the late holder's result write and failure-release are
+   compare-and-set / compare-and-delete against its own token, so it can no longer
+   overwrite the new holder's result or delete its claim (which used to let a
+   *third* caller run as well). It cannot undo the second run itself — a lease
+   cannot. Set `pendingTtl` above the longest effect, or use the Postgres store.
+   Redis eviction policies (`allkeys-*`/`volatile-*`) can also drop a claim under
+   memory pressure.
 5. **Stored results must be JSON-serialisable** (Postgres round-trips `result`
    through JSON). Return plain data, not class instances or functions.
 6. **A slow effect holds a row lock and a pooled connection for its whole

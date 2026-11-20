@@ -6,6 +6,23 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0]
+
+### Changed (breaking for custom `RedisLike` adapters)
+- **Redis claims carry an ownership token** (closes #10). The pending value now
+  holds a random token, and `RedisLike` swaps `setValue`/`del` for
+  `setIfValue(key, expected, value, ttlMs)` and `delIfValue(key, expected)`:
+  atomic compare-and-set / compare-and-delete. `fromNodeRedis` implements them as
+  Lua scripts, exported as `SET_IF_VALUE_LUA` / `DEL_IF_VALUE_LUA` so other
+  adapters reuse the same ones. `fromNodeRedis` users need no change.
+
+### Fixed
+- A Redis holder whose claim expired mid-effect could overwrite the result of the
+  caller that took over, or — if its effect then threw — delete that caller's
+  live claim and let a third caller run the effect again. Both are now no-ops for
+  a holder that no longer owns the claim. Two tests force the expiry and fail
+  without the token.
+
 ## [0.6.0]
 
 ### Added
