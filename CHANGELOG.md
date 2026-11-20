@@ -6,6 +6,15 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`examples/payment-path`: the whole payment path in one place.** Signature
+  verification (raw-body HMAC, constant-time, timestamp tolerance, rotation),
+  exactly-once via the store, an append-only ledger, and a dead-letter path with
+  replay. The Postgres version writes the ledger row in the same transaction as
+  the idempotency key, and `ledger.sql` makes the table append-only with a trigger
+  plus UNIQUE `event_id` and `reverses`. Tests for each step, on the memory store
+  and (in CI) a real Postgres. `make example` runs the demo.
+
 ## [0.7.0]
 
 ### Changed (breaking for custom `RedisLike` adapters)
