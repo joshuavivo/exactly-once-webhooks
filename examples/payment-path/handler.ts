@@ -23,6 +23,12 @@ export type PaymentEvent = {
   data: { charge: string; account: string; amount_cents: number };
 };
 
+/** Throw this from `apply` for an event that will fail the same way on every
+ *  retry (a partial refund this ledger doesn't support, an unknown account). It is
+ *  dead-lettered at once instead of burning the provider's retries. Any other
+ *  error is treated as transient: 500, and the provider redelivers. */
+export class PermanentError extends Error {}
+
 export type DeadLetter = { eventId: string | null; reason: string; rawBody: string; attempts: number };
 
 export type Response = { status: 200 | 400 | 500; body: string };
@@ -50,6 +56,13 @@ export async function applyToLedger(event: PaymentEvent, ledger: Ledger): Promis
       memo: "charge succeeded",
     });
   } else {
+    const original = ledger.rows().find((r) => r.ref === event.data.charge && r.reverses === undefined && r.amountCents > 0);
+    // Not there yet: webhooks arrive out of order, so a refund can beat its charge.
+    // Transient — the provider's redelivery will find it.
+    if (!original) throw new Error(`no credit found for charge ${event.data.charge}`);
+    if (event.data.amount_cents !== original.amountCents) {
+      throw new PermanentError(`partial refund (${event.data.amount_cents} of ${original.amountCents}) is not supported`);
+    }
     ledger.reverseCharge(event.data.charge, event.id, "charge refunded");
   }
 }
@@ -75,9 +88,23 @@ export function createPaymentHandler<Ctx>(opts: HandlerOptions<Ctx>) {
   const apply = opts.apply;
   const now = opts.now ?? (() => Math.floor(Date.now() / 1000));
   const deadLetters: DeadLetter[] = [];
-  // Failure count per event id. In production this lives next to the dead-letter
-  // table (or comes from the provider's own attempt header), not in memory.
+  // Failed DELIVERIES per event id. In production this lives next to the
+  // dead-letter table (or comes from the provider's attempt header), not in memory.
   const failures = new Map<string, number>();
+  // Deliveries of an event currently in flight. Concurrent copies that fail
+  // together are one failed delivery, not N: only the last one out counts it.
+  // Otherwise a burst of three copies during one DB blip would exhaust
+  // maxAttempts=3 in a single moment and dead-letter a payment that a later,
+  // ordinary redelivery would have applied.
+  const inFlight = new Map<string, number>();
+  const idOf = (raw: string): string | null => {
+    try {
+      const id = (JSON.parse(raw) as { id?: unknown })?.id;
+      return typeof id === "string" && id ? id : null;
+    } catch {
+      return null;
+    }
+  };
 
   async function handle(rawBody: string, signatureHeader: string | undefined): Promise<Response> {
     const verdict = verifySignature(rawBody, signatureHeader, opts.secret, now());
@@ -85,12 +112,17 @@ export function createPaymentHandler<Ctx>(opts: HandlerOptions<Ctx>) {
 
     const parsed = parseEvent(rawBody);
     if (typeof parsed === "string") {
-      deadLetters.push({ eventId: null, reason: parsed, rawBody, attempts: 0 });
+      // Keep the id when the body has one, so redeliveries of the same malformed
+      // event don't each add another letter.
+      const id = idOf(rawBody);
+      if (id && deadLetters.some((d) => d.eventId === id)) return { status: 200, body: "already dead-lettered" };
+      deadLetters.push({ eventId: id, reason: parsed, rawBody, attempts: 0 });
       return { status: 200, body: "dead-lettered" };
     }
     const event = parsed;
     if (deadLetters.some((d) => d.eventId === event.id)) return { status: 200, body: "already dead-lettered" };
 
+    inFlight.set(event.id, (inFlight.get(event.id) ?? 0) + 1);
     try {
       const outcome = await opts.store.run(event.id, async (ctx) => {
         await apply(event, ctx);
@@ -99,8 +131,17 @@ export function createPaymentHandler<Ctx>(opts: HandlerOptions<Ctx>) {
       failures.delete(event.id);
       return { status: 200, body: outcome.status };
     } catch (err) {
+      if (err instanceof PermanentError) {
+        if (!deadLetters.some((d) => d.eventId === event.id)) {
+          deadLetters.push({ eventId: event.id, reason: err.message, rawBody, attempts: 1 });
+        }
+        failures.delete(event.id);
+        return { status: 200, body: "dead-lettered" };
+      }
       // The store stored nothing (a failed effect is never recorded), so the next
-      // delivery will try again. Count it; give up into the dead letter at the cap.
+      // delivery will try again. Count the failed delivery once per burst of
+      // concurrent copies; give up into the dead letter at the cap.
+      if ((inFlight.get(event.id) ?? 1) > 1) return { status: 500, body: "retry" };
       const n = (failures.get(event.id) ?? 0) + 1;
       failures.set(event.id, n);
       if (n >= maxAttempts) {
@@ -109,6 +150,10 @@ export function createPaymentHandler<Ctx>(opts: HandlerOptions<Ctx>) {
         return { status: 200, body: "dead-lettered" };
       }
       return { status: 500, body: "retry" };
+    } finally {
+      const left = (inFlight.get(event.id) ?? 1) - 1;
+      if (left > 0) inFlight.set(event.id, left);
+      else inFlight.delete(event.id);
     }
   }
 

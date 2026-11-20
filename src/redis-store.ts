@@ -75,8 +75,17 @@ const MAX_CLAIM_ATTEMPTS = 50;
  */
 export function createRedisStore(redis: RedisLike, options: RedisStoreOptions = {}): IdempotencyStore<undefined> {
   const prefix = options.keyPrefix ?? "eow:";
-  const ttlMs = (options.ttlSeconds ?? 86_400) * 1000;
-  const pendingTtlMs = (options.pendingTtlSeconds ?? 30) * 1000;
+  // Validate up front. A zero, negative or NaN TTL becomes `PX 0`/`PX NaN`, which
+  // Redis rejects on the result write: AFTER the effect has run, so the error
+  // surfaces and a redelivery runs the effect again. Fail at construction instead.
+  // Milliseconds are rounded up here, not left to each adapter (Redis PX takes an
+  // integer).
+  const positive = (name: string, v: number) => {
+    if (!Number.isFinite(v) || v <= 0) throw new Error(`${name} must be a positive number of seconds, got ${JSON.stringify(v)}`);
+    return Math.ceil(v * 1000);
+  };
+  const ttlMs = positive("ttlSeconds", options.ttlSeconds ?? 86_400);
+  const pendingTtlMs = positive("pendingTtlSeconds", options.pendingTtlSeconds ?? 30);
   const pollIntervalMs = options.pollIntervalMs ?? 25;
   const maxWaitMs = options.maxWaitMs ?? 5000;
 
