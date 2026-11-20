@@ -1,6 +1,6 @@
 {
   "name": "exactly-once-webhooks",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Process payment webhooks exactly once, even when they are delivered twice or arrive at the same moment. In-memory, Postgres and Redis stores.",
   "type": "module",
   "exports": {

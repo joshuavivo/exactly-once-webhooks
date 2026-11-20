@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-20
+
 ### Added
 - **`onRetry({ key, attempt })`** on the Redis and Postgres stores (closes #7):
   fires when a waiter must retry because the holder failed, so contention and a
