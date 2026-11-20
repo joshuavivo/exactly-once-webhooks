@@ -162,7 +162,11 @@ export function createPaymentHandler<Ctx>(opts: HandlerOptions<Ctx>) {
   async function replay(eventId: string): Promise<Response> {
     const letter = deadLetters.find((d) => d.eventId === eventId);
     if (!letter) return { status: 400, body: "no such dead letter" };
-    const event = parseEvent(letter.rawBody) as PaymentEvent;
+    // A letter parked because the event itself was malformed is still malformed:
+    // refuse it (400) and keep it, rather than hand the unparsed body to the write.
+    const parsed = parseEvent(letter.rawBody);
+    if (typeof parsed === "string") return { status: 400, body: `still malformed: ${parsed}` };
+    const event = parsed;
     // If the replay fails too, the letter stays where it is: nothing is lost.
     const outcome = await opts.store.run(event.id, async (ctx) => {
       await apply(event, ctx);

@@ -171,6 +171,19 @@ test("dead letter: a failed replay keeps the letter", async () => {
   assert.equal(h.deadLetters().length, 1);
 });
 
+test("dead letter: replaying a malformed letter is refused and keeps the letter", async () => {
+  // A malformed event is parked with its id. Replaying it must not hand the
+  // unparsed body to the ledger write, and must not drop the letter.
+  let applied = 0;
+  const { ledger, h } = setup({ apply: async (e, l) => { applied += 1; await applyToLedger(e, l); } });
+  const bad = delivery({ id: "evt_9", type: "charge.succeeded", data: { charge: "ch_9", account: "acct_1", amount_cents: -5 } });
+  await h.handle(bad.body, bad.sig);
+  assert.deepEqual(await h.replay("evt_9"), { status: 400, body: "still malformed: amount_cents must be a positive integer" });
+  assert.equal(applied, 0, "the ledger write never ran");
+  assert.equal(ledger.rows().length, 0);
+  assert.equal(h.deadLetters().length, 1, "the letter stays for a person to fix");
+});
+
 // --- 5. found by an adversarial review --------------------------------------
 
 const refundOf = (id: string, charge: string, cents: number) => ({
