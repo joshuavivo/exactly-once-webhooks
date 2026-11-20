@@ -132,6 +132,13 @@ small `connect()` / `query()` shape `pg` provides. `options.table` defaults to
 `"idempotency_keys"`. The effect's context is the transaction's client, so your
 writes join the same transaction.
 
+`options.lockTimeoutMs` (default 5000, `0` = wait forever) bounds how long a caller
+waits for another caller's claim on the same key. A waiter holds a pooled
+connection while it waits, so without a bound one slow effect on a hot key can
+starve the pool for every other key. On timeout the caller gets a clear error and
+its connection back, and the provider's redelivery tries again. It applies to the
+claim only, never to your effect's own statements.
+
 Keep the table from growing forever with `pruneExpiredKeys(pool, { olderThanSeconds })`
 on a schedule — it deletes processed keys older than a window you choose (set it
 past your provider's retry window). The Redis store needs no pruning; its TTL

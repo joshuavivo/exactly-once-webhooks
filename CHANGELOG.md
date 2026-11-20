@@ -6,6 +6,20 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **Postgres: waits on another caller's claim are bounded** (closes #11). New
+  `lockTimeoutMs` option, default **5000** (before: no limit; set `0` to keep
+  that). A transaction-local `lock_timeout` on the claim, reset before the effect
+  runs, so effect statements are unaffected. A timed-out caller throws a clear
+  error and frees its pooled connection; a real-Postgres test with a 2-connection
+  pool shows an unrelated key served promptly while a slow holder runs.
+
+### Fixed
+- Postgres claim-loop comments, the cap's error message and DESIGN limitations 6–7
+  described a "retry after the holder rolls back" that real Postgres never does:
+  the waiter's blocked INSERT takes the key directly (closes #24). The loop now
+  says what really sends it round (a prune racing the key), with a test.
+
 ## [0.8.0] - 2026-11-20
 
 ### Added
