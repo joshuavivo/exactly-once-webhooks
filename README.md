@@ -13,8 +13,11 @@ guarantee it runs once — with a Postgres store that holds up across many serve
 Redis store for when the effect is idempotent, and an in-memory store for tests and
 single-process use.
 
+Not on the npm registry yet. Install the packed release from GitHub (CI installs
+this exact tarball into a fresh project and imports it on every change):
+
 ```
-npm install exactly-once-webhooks
+npm install https://github.com/joshuavivo/exactly-once-webhooks/releases/download/v0.7.0/exactly-once-webhooks-0.7.0.tgz
 ```
 
 No runtime dependencies. Node 22.18+ (it ships as TypeScript and compiled JS).
@@ -100,7 +103,10 @@ Runs `effect` at most once for `key`.
 - Later calls for the same key: return `{ status: "duplicate", result }` without
   running `effect` again.
 - Concurrent calls for the same key: exactly one runs the effect; the rest wait
-  and return `duplicate`.
+  and return `duplicate`. (Redis waiters give up after `maxWaitMs`, default 5 s,
+  and throw. If a holder crashed, its claim blocks the key until `pendingTtl`,
+  default 30 s, lapses, so redeliveries in that window fail and are retried by
+  the provider.)
 - If `effect` throws, nothing is stored and the error is re-thrown, so a later
   delivery can retry.
 
@@ -178,7 +184,9 @@ How to read it:
   effect commits atomically with the record. A shared CI runner is noisy, so treat
   the tail as an upper bound, not a promise.
 - **Hot key ≈ the effect's own time.** With a 20 ms effect, the 99 waiters get their
-  answer about when the one real run finishes: memory and Redis add ~0–3 ms.
+  answer about when the one real run finishes: memory and Redis add ~0–3 ms. The
+  Redis row uses `pollIntervalMs: 2` (bench.ts); at the default of 25 a waiter can
+  add up to ~25 ms, the cost of polling instead of blocking.
   Postgres adds more, because each waiter blocks on `FOR UPDATE` holding a
   connection (DESIGN limitation 6, issue #11).
 
