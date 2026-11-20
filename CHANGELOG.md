@@ -7,6 +7,14 @@ follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **DESIGN: "Alternatives, and why this design doesn't use them".** Check-then-insert,
+  a plain insert that catches the unique violation, advisory locks, `SERIALIZABLE`
+  and retry, effect-then-record, Redlock, and the provider's idempotency key, each
+  with the reason it falls short here, plus the outbox pattern for external API
+  calls. The Postgres behaviour it cites (a failed insert aborts the transaction
+  unless it's in a savepoint; `hashtext` is 32-bit; how a concurrent insert waits)
+  was checked on Postgres 16. Written as reasoning, not as a history of what was
+  tried.
 - **Redis: a call whose claim expired mid-effect now says so.** It still returns
   `status: "processed"` (the effect did run), plus `lostClaim: true`, because its
   compare-and-set result write did not apply, so nothing was recorded. Either another
