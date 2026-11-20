@@ -1,4 +1,4 @@
-import type { IdempotencyStore, Outcome } from "./types.ts";
+import type { IdempotencyStore, Outcome, RetryInfo } from "./types.ts";
 
 // The library does not depend on the `pg` package. It asks only for the small
 // slice of a pool/client it actually uses, so it works with `pg`, `pg-pool`, or
@@ -19,6 +19,10 @@ export interface Pool {
 export type PostgresStoreOptions = {
   /** Table that holds the idempotency keys. Default "idempotency_keys". */
   table?: string;
+  /** Called when a waiter has to retry because the holder rolled back. Optional,
+   *  a no-op when absent; an exception from it is ignored so observability can
+   *  never break the store. Wire it to a log line or a counter. */
+  onRetry?: (info: RetryInfo) => void;
 };
 
 /**
@@ -90,6 +94,9 @@ export function createPostgresStore(pool: Pool, options: PostgresStoreOptions = 
         // No committed row: a committed row is always 'done' (the 'pending' state
         // only exists inside the holder's uncommitted transaction), so an absent
         // row means the holder rolled back. Retry as the first caller next pass.
+        if (options.onRetry) {
+          try { options.onRetry({ key, attempt }); } catch { /* observability must not break the store */ }
+        }
       } catch (err) {
         await client.query("ROLLBACK").catch(() => {});
         throw err;

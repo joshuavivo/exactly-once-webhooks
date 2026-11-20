@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { IdempotencyStore, Outcome } from "./types.ts";
+import type { IdempotencyStore, Outcome, RetryInfo } from "./types.ts";
 
 // A Redis-backed store. Like the Postgres store it is safe across many processes,
 // but it closes the race differently and trades away one guarantee the Postgres
@@ -48,6 +48,10 @@ export type RedisStoreOptions = {
   /** How long a waiting caller waits for the holder before giving up, in ms.
    *  Effects should be short; this guards against a wedged holder. Default 5000. */
   maxWaitMs?: number;
+  /** Called when a waiter has to retry because the holder's claim vanished (its
+   *  effect threw, or its lease lapsed). Optional, a no-op when absent; an
+   *  exception from it is ignored. `key` is the caller's key, without the prefix. */
+  onRetry?: (info: RetryInfo) => void;
 };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -132,7 +136,13 @@ export function createRedisStore(redis: RedisLike, options: RedisStoreOptions = 
       const start = Date.now();
       for (;;) {
         const raw = await redis.get(k);
-        if (raw === null) break; // holder gone → reclaim on the next attempt
+        if (raw === null) {
+          // holder gone → reclaim on the next attempt
+          if (options.onRetry) {
+            try { options.onRetry({ key, attempt }); } catch { /* observability must not break the store */ }
+          }
+          break;
+        }
         const parsed = JSON.parse(raw) as { s: "pending" | "done"; r?: unknown; t?: string };
         if (parsed.s === "done") {
           return { status: "duplicate", result: parsed.r as T };
