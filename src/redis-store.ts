@@ -179,9 +179,7 @@ export const DEL_IF_VALUE_LUA =
  *   const client = createClient(); await client.connect();
  *   const store = createRedisStore(fromNodeRedis(client));
  *
- * For ioredis the calls differ slightly (`set(key, value, "PX", ms, "NX")`,
- * `eval(script, 1, key, ...args)`); write a four-method adapter the same way,
- * reusing `SET_IF_VALUE_LUA` and `DEL_IF_VALUE_LUA`.
+ * For ioredis, use `fromIoRedis`.
  */
 export function fromNodeRedis(client: {
   set(key: string, value: string, opts: { NX?: boolean; PX?: number }): Promise<string | null>;
@@ -202,6 +200,36 @@ export function fromNodeRedis(client: {
     async delIfValue(key, expected) {
       const r = await client.eval(DEL_IF_VALUE_LUA, { keys: [key], arguments: [expected] });
       return Number(r) === 1;
+    },
+  };
+}
+
+/**
+ * Adapt an ioredis client to the small `RedisLike` shape this store needs.
+ *
+ *   import Redis from "ioredis";
+ *   const store = createRedisStore(fromIoRedis(new Redis()));
+ *
+ * ioredis takes SET options positionally (`"PX", ms, "NX"`) and `eval` as
+ * `(script, numKeys, ...keysThenArgs)`; the Lua is the same as `fromNodeRedis`.
+ */
+export function fromIoRedis(client: {
+  set(key: string, value: string, px: "PX", ms: number, nx?: "NX"): Promise<string | null>;
+  get(key: string): Promise<string | null>;
+  eval(script: string, numKeys: number, ...keysAndArgs: string[]): Promise<unknown>;
+}): RedisLike {
+  return {
+    async setClaim(key, value, ttlMs) {
+      return (await client.set(key, value, "PX", Math.ceil(ttlMs), "NX")) === "OK";
+    },
+    async setIfValue(key, expected, value, ttlMs) {
+      return Number(await client.eval(SET_IF_VALUE_LUA, 1, key, expected, value, String(Math.ceil(ttlMs)))) === 1;
+    },
+    get(key) {
+      return client.get(key);
+    },
+    async delIfValue(key, expected) {
+      return Number(await client.eval(DEL_IF_VALUE_LUA, 1, key, expected)) === 1;
     },
   };
 }
