@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { IdempotencyStore, Outcome } from "./types.ts";
 
 // A Redis-backed store. Like the Postgres store it is safe across many processes,
@@ -7,16 +8,24 @@ import type { IdempotencyStore, Outcome } from "./types.ts";
 // The library does not depend on a Redis client. It asks only for the four
 // operations it uses, so it works with node-redis, ioredis, or any wrapper. A
 // ready-made adapter for node-redis v4+ is exported as `fromNodeRedis`.
+//
+// Every claim carries a random ownership token. The holder only finalizes or
+// releases the key if it still holds THAT token, so a holder whose claim expired
+// mid-effect can never overwrite or delete the claim of the caller who took over.
 
 export interface RedisLike {
   /** SET key=value only if the key is absent (NX), with a TTL of `ttlMs` (PX).
    *  Returns true if this call set the key, false if it already existed. This is
    *  the atomic "only one caller wins the claim" primitive. */
   setClaim(key: string, value: string, ttlMs: number): Promise<boolean>;
-  /** SET key=value with a TTL of `ttlMs`, overwriting any current value. */
-  setValue(key: string, value: string, ttlMs: number): Promise<void>;
+  /** Compare-and-set: only if the key's current value is exactly `expected`, SET
+   *  key=value with a TTL of `ttlMs`. Returns true if it wrote. Must be atomic (a
+   *  Lua script on real Redis — see `fromNodeRedis`). */
+  setIfValue(key: string, expected: string, value: string, ttlMs: number): Promise<boolean>;
   get(key: string): Promise<string | null>;
-  del(key: string): Promise<void>;
+  /** Compare-and-delete: DEL the key only if its current value is exactly
+   *  `expected`. Returns true if it deleted. Must be atomic, like `setIfValue`. */
+  delIfValue(key: string, expected: string): Promise<boolean>;
 }
 
 export type RedisStoreOptions = {
@@ -30,7 +39,9 @@ export type RedisStoreOptions = {
    *  Kept short so a holder that crashes mid-effect frees the key in seconds, not
    *  for the whole `ttlSeconds` window. Must exceed the effect's worst-case
    *  duration: if the effect runs longer than this, the claim expires mid-flight
-   *  and another caller may run it too (there is no ownership token yet). Default 30. */
+   *  and another caller may run the effect too. The ownership token stops the
+   *  late holder from clobbering the new holder's claim or result, but it cannot
+   *  undo the second run. Default 30. */
   pendingTtlSeconds?: number;
   /** How often a waiting caller re-checks the holder, in ms. Default 25. */
   pollIntervalMs?: number;
@@ -39,7 +50,6 @@ export type RedisStoreOptions = {
   maxWaitMs?: number;
 };
 
-const PENDING = JSON.stringify({ s: "pending" });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // Cap on claim retries (a retry only happens when the holder's key vanished). High
@@ -78,22 +88,33 @@ export function createRedisStore(redis: RedisLike, options: RedisStoreOptions = 
     // lapsed). The cap turns a deterministically failing effect into a clear error
     // instead of an unbounded retry.
     for (let attempt = 1; attempt <= MAX_CLAIM_ATTEMPTS; attempt++) {
-      const claimed = await redis.setClaim(k, PENDING, pendingTtlMs);
+      // A fresh token per claim attempt: the pending value is unique to this
+      // caller, so the compare-and-set / compare-and-delete below only ever act on
+      // a claim this caller still owns.
+      const pending = JSON.stringify({ s: "pending", t: randomUUID() });
+      const claimed = await redis.setClaim(k, pending, pendingTtlMs);
       if (claimed) {
         let result: T;
         try {
           result = await effect(undefined);
         } catch (err) {
           // The effect threw: release the key so a later delivery retries,
-          // mirroring the Postgres store's rollback.
-          await redis.del(k).catch(() => {});
+          // mirroring the Postgres store's rollback — but only if the claim is
+          // still ours. If it expired and someone else took it, leave theirs alone.
+          await redis.delIfValue(k, pending).catch(() => {});
           throw err;
         }
         // The effect succeeded. Record the result under the full dedup window. If
         // THIS write fails, do NOT delete the claim — the effect already ran, so
         // freeing the key would re-run it. Leave the short-lived pending claim to
         // expire on its own and surface the error.
-        await redis.setValue(k, JSON.stringify({ s: "done", r: result ?? null }), ttlMs);
+        //
+        // The write is compare-and-set against our own pending token. If it does
+        // not apply, our claim expired mid-effect and another caller now owns the
+        // key (and may already have recorded its own result). We do not overwrite
+        // that: the effect did run here, so we still report "processed", and the
+        // other caller's record stands. (DESIGN.md, limitation 4.)
+        await redis.setIfValue(k, pending, JSON.stringify({ s: "done", r: result ?? null }), ttlMs);
         return { status: "processed", result };
       }
 
@@ -103,7 +124,7 @@ export function createRedisStore(redis: RedisLike, options: RedisStoreOptions = 
       for (;;) {
         const raw = await redis.get(k);
         if (raw === null) break; // holder gone → reclaim on the next attempt
-        const parsed = JSON.parse(raw) as { s: "pending" | "done"; r?: unknown };
+        const parsed = JSON.parse(raw) as { s: "pending" | "done"; r?: unknown; t?: string };
         if (parsed.s === "done") {
           return { status: "duplicate", result: parsed.r as T };
         }
@@ -122,6 +143,16 @@ export function createRedisStore(redis: RedisLike, options: RedisStoreOptions = 
   return { run };
 }
 
+// Compare-and-set / compare-and-delete as Lua, so the GET-compare and the write
+// happen atomically inside Redis. Exported so other adapters (ioredis etc.) can
+// reuse exactly the same scripts.
+export const SET_IF_VALUE_LUA =
+  "if redis.call('GET', KEYS[1]) == ARGV[1] then " +
+  "redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3]) return 1 else return 0 end";
+export const DEL_IF_VALUE_LUA =
+  "if redis.call('GET', KEYS[1]) == ARGV[1] then " +
+  "return redis.call('DEL', KEYS[1]) else return 0 end";
+
 /**
  * Adapt a node-redis v4+ client to the small `RedisLike` shape this store needs.
  *
@@ -129,26 +160,29 @@ export function createRedisStore(redis: RedisLike, options: RedisStoreOptions = 
  *   const client = createClient(); await client.connect();
  *   const store = createRedisStore(fromNodeRedis(client));
  *
- * For ioredis the calls differ slightly (`set(key, value, "PX", ms, "NX")`); write
- * a four-method adapter the same way.
+ * For ioredis the calls differ slightly (`set(key, value, "PX", ms, "NX")`,
+ * `eval(script, 1, key, ...args)`); write a four-method adapter the same way,
+ * reusing `SET_IF_VALUE_LUA` and `DEL_IF_VALUE_LUA`.
  */
 export function fromNodeRedis(client: {
   set(key: string, value: string, opts: { NX?: boolean; PX?: number }): Promise<string | null>;
   get(key: string): Promise<string | null>;
-  del(key: string): Promise<number>;
+  eval(script: string, opts: { keys: string[]; arguments: string[] }): Promise<unknown>;
 }): RedisLike {
   return {
     async setClaim(key, value, ttlMs) {
-      return (await client.set(key, value, { NX: true, PX: ttlMs })) === "OK";
+      return (await client.set(key, value, { NX: true, PX: Math.ceil(ttlMs) })) === "OK";
     },
-    async setValue(key, value, ttlMs) {
-      await client.set(key, value, { PX: ttlMs });
+    async setIfValue(key, expected, value, ttlMs) {
+      const r = await client.eval(SET_IF_VALUE_LUA, { keys: [key], arguments: [expected, value, String(Math.ceil(ttlMs))] });
+      return Number(r) === 1;
     },
     get(key) {
       return client.get(key);
     },
-    async del(key) {
-      await client.del(key);
+    async delIfValue(key, expected) {
+      const r = await client.eval(DEL_IF_VALUE_LUA, { keys: [key], arguments: [expected] });
+      return Number(r) === 1;
     },
   };
 }

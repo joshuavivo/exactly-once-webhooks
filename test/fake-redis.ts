@@ -2,9 +2,9 @@ import type { RedisLike } from "../src/redis-store.ts";
 
 // An in-process stand-in for Redis that models exactly the semantics the store
 // relies on: SET NX (only the first setter wins), PX (a TTL after which the key is
-// gone), GET, and DEL. The check-and-set in setClaim is synchronous, so it is
-// atomic under the single-threaded event loop — which is the whole point of using
-// NX for the claim. The redis-store contract runs against this with no services;
+// gone), GET, and compare-and-set / compare-and-delete. Each check-and-write is
+// synchronous, so it is atomic under the single-threaded event loop — the same
+// guarantee real Redis gives NX and the Lua scripts. The redis-store contract runs against this with no services;
 // the same store also runs against a real Redis when REDIS_URL is set.
 
 export type FakeRedis = RedisLike & {
@@ -33,14 +33,18 @@ export function createFakeRedis(): FakeRedis {
       store.set(key, { value, expiresAt: Date.now() + ttlMs });
       return true;
     },
-    async setValue(key, value, ttlMs) {
+    async setIfValue(key, expected, value, ttlMs) {
+      if (live(key) !== expected) return false;
       store.set(key, { value, expiresAt: Date.now() + ttlMs });
+      return true;
     },
     async get(key) {
       return live(key);
     },
-    async del(key) {
+    async delIfValue(key, expected) {
+      if (live(key) !== expected) return false;
       store.delete(key);
+      return true;
     },
     _size() {
       let n = 0;
