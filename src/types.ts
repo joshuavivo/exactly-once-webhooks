@@ -24,6 +24,15 @@ export type Outcome<T> = {
    */
   status: "processed" | "duplicate";
   result: T;
+  /**
+   * Set only by the Redis store, only on "processed": this call ran the effect,
+   * but its claim expired before the effect finished, so this result was not
+   * recorded. Either another caller took the key over (the effect may have run
+   * twice), or nobody did (the key is free, so the next delivery runs the effect
+   * again). See DESIGN.md, limitation 4. Log or alert on it; if it happens, raise
+   * `pendingTtlSeconds` above your slowest effect.
+   */
+  lostClaim?: true;
 };
 
 /**
