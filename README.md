@@ -83,10 +83,11 @@ The Postgres store rests on two guarantees, not on application logic:
 1. **A `PRIMARY KEY` on the event id.** The first delivery inserts the row; a
    second delivery's insert does nothing (`ON CONFLICT DO NOTHING`). Only one
    delivery is ever "the first".
-2. **`SELECT ... FOR UPDATE` on the row.** A concurrent second delivery blocks
-   until the first delivery's transaction commits, then reads the stored result
-   instead of running the effect again. If the first effect threw, its
-   transaction rolled back, the row is gone, and the second delivery retries.
+2. **The loser waits inside that `INSERT`.** A concurrent second delivery's insert
+   blocks until the first delivery's transaction ends. On commit it gets zero rows
+   and reads the stored result instead of running the effect again. If the first
+   effect threw, its transaction rolled back and the second delivery's insert
+   claims the key.
 
 Because the effect runs inside that transaction, your write to `accounts` and the
 "handled" record commit together. There is no window where one landed and the
@@ -206,7 +207,7 @@ How to read it:
   answer about when the one real run finishes: memory and Redis add ~0–3 ms. The
   Redis row uses `pollIntervalMs: 2` (bench.ts); at the default of 25 a waiter can
   add up to ~25 ms, the cost of polling instead of blocking.
-  Postgres adds more, because each waiter blocks on `FOR UPDATE` holding a
+  Postgres adds more, because each waiter blocks in its `INSERT` holding a
   connection (DESIGN limitation 6, issue #11).
 
 ## What this is not

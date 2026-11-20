@@ -37,9 +37,10 @@ export type PostgresStoreOptions = {
 };
 
 /**
- * Postgres-backed store. Safe across many processes: the guarantee rests on a
- * UNIQUE constraint on the key plus `SELECT ... FOR UPDATE`, so two servers that
- * receive the same event at the same instant cannot both run the effect.
+ * Postgres-backed store. Safe across many processes: the guarantee rests on the
+ * UNIQUE constraint on the key. A second insert of the same key waits for the
+ * first transaction to end, so two servers that receive the same event at the
+ * same instant cannot both run the effect.
  *
  * The effect runs inside the same transaction as the idempotency record, and is
  * given that transaction's client as its context, so the effect's own writes and
@@ -81,8 +82,8 @@ export function createPostgresStore(pool: Pool, options: PostgresStoreOptions = 
         // as a parameter, so no number is ever spliced into the SQL text.
         await client.query("SELECT set_config('lock_timeout', $1, true)", [String(lockTimeoutMs)]);
 
-        // Claim the key. ON CONFLICT DO NOTHING means only the first inserter gets
-        // a row back; everyone else gets zero rows and knows to wait.
+        // Claim the key. If another transaction holds an uncommitted row for it,
+        // this INSERT waits for it to end: zero rows on its COMMIT, ours on ROLLBACK.
         const claimed = await client.query(
           `INSERT INTO ${table} (key, status) VALUES ($1, 'pending')
            ON CONFLICT (key) DO NOTHING
@@ -105,9 +106,10 @@ export function createPostgresStore(pool: Pool, options: PostgresStoreOptions = 
           return { status: "processed", result };
         }
 
-        // Someone else holds the key. FOR UPDATE blocks until their transaction
-        // ends: on their COMMIT the row is 'done'; on their ROLLBACK (the effect
-        // threw) no row is visible.
+        // Someone else claimed the key first. Our INSERT already waited for their
+        // transaction to end (had they rolled back, it would have claimed the key
+        // instead), so the row we read now is committed and 'done', unless a prune
+        // removed it in between (handled below).
         const seen = await client.query(
           `SELECT status, result FROM ${table} WHERE key = $1 FOR UPDATE`,
           [key],
