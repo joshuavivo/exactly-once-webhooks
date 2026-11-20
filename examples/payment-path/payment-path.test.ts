@@ -170,3 +170,48 @@ test("dead letter: a failed replay keeps the letter", async () => {
   await assert.rejects(() => h.replay("evt_1"), /still frozen/);
   assert.equal(h.deadLetters().length, 1);
 });
+
+// --- 5. found by an adversarial review --------------------------------------
+
+const refundOf = (id: string, charge: string, cents: number) => ({
+  id, type: "charge.refunded", data: { charge, account: "acct_1", amount_cents: cents },
+});
+
+test("review: a partial refund is dead-lettered at once, not turned into a full reversal", async () => {
+  const { ledger, h } = setup();
+  const c = delivery(charge("evt_1", 5000));
+  await h.handle(c.body, c.sig);
+  const partial = delivery(refundOf("evt_2", "ch_evt_1", 1000));
+  assert.deepEqual(await h.handle(partial.body, partial.sig), { status: 200, body: "dead-lettered" });
+  assert.match(h.deadLetters()[0]!.reason, /partial refund \(1000 of 5000\)/);
+  assert.equal(ledger.balance("acct_1"), 5000, "nothing reversed");
+});
+
+test("review: a refund that arrives before its charge is retried, then applies", async () => {
+  const { ledger, h } = setup();
+  const refund = delivery(refundOf("evt_2", "ch_evt_1", 5000));
+  assert.equal((await h.handle(refund.body, refund.sig)).status, 500, "out of order: transient, not parked");
+  const c = delivery(charge("evt_1", 5000));
+  await h.handle(c.body, c.sig);
+  assert.equal((await h.handle(refund.body, refund.sig)).body, "processed");
+  assert.equal(ledger.balance("acct_1"), 0);
+});
+
+test("review: concurrent copies that fail together count as ONE failed delivery", async () => {
+  const apply = async () => { await new Promise((r) => setTimeout(r, 5)); throw new Error("db blip"); };
+  const { h } = setup({ apply, maxAttempts: 2 });
+  const { body, sig } = delivery(charge("evt_1"));
+  const burst = await Promise.all([1, 2, 3].map(() => h.handle(body, sig)));
+  assert.deepEqual(burst.map((r) => r.status), [500, 500, 500]);
+  assert.equal(h.deadLetters().length, 0, "one burst is one failure, below maxAttempts=2");
+  assert.equal((await h.handle(body, sig)).body, "dead-lettered", "the second failed delivery reaches the cap");
+});
+
+test("review: the same malformed event delivered twice makes one dead letter", async () => {
+  const { h } = setup();
+  const bad = delivery({ id: "evt_9", type: "charge.succeeded", data: { charge: "ch_9", account: "acct_1", amount_cents: 0 } });
+  assert.equal((await h.handle(bad.body, bad.sig)).body, "dead-lettered");
+  assert.equal((await h.handle(bad.body, bad.sig)).body, "already dead-lettered");
+  assert.equal(h.deadLetters().length, 1);
+  assert.equal(h.deadLetters()[0]!.eventId, "evt_9");
+});
