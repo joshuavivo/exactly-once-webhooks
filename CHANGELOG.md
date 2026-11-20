@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-20
+
 ### Added
 - **`fromIoRedis(client)`** (closes #3): ioredis adapter using the same Lua
   scripts as `fromNodeRedis`. The full shared contract runs against it through an
