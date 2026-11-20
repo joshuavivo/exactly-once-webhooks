@@ -6,6 +6,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Redis: a call whose claim expired mid-effect now says so.** It still returns
+  `status: "processed"` (the effect did run), plus `lostClaim: true`, because its
+  compare-and-set result write did not apply, so nothing was recorded. Either another
+  caller had taken the key over (the effect may have run twice) or nobody had (the
+  next delivery runs it again); DESIGN limitation 4. Before, the CAS outcome was
+  ignored and the call looked like a normal first run. `Outcome<T>` gains the
+  optional `lostClaim?: true`; the Postgres and memory stores never set it. Found in
+  an external review.
+
 ## [0.9.0] - 2026-11-20
 
 ### Added

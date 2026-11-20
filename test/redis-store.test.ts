@@ -181,11 +181,28 @@ test("a holder whose claim expired does not overwrite the new holder's result", 
   assert.deepEqual(second, { status: "processed", result: "on-time" });
 
   const late = await slow;
-  assert.deepEqual(late, { status: "processed", result: "late" }, "the effect did run, and says so");
+  // The effect did run, and says so — and the caller can see its result was NOT
+  // recorded, because another caller took the key over mid-effect.
+  assert.deepEqual(late, { status: "processed", result: "late", lostClaim: true });
 
   // The record that stands is the new holder's, not the late writer's.
   const third = await store.run("evt", async () => "never");
   assert.deepEqual(third, { status: "duplicate", result: "on-time" });
+});
+
+test("a holder whose claim expired with no one taking over is flagged, and the key is free again", async () => {
+  const redis = createFakeRedis();
+  const store = createRedisStore(redis, { pendingTtlSeconds: 0.02, pollIntervalMs: 1 });
+  let runs = 0;
+
+  const late = await store.run("evt", async () => { runs += 1; await pause(60); return "late"; });
+  assert.deepEqual(late, { status: "processed", result: "late", lostClaim: true }, "nothing was recorded, and it says so");
+
+  // Nothing was recorded, so the next delivery runs the effect again. That is the
+  // case the flag exists to surface.
+  const next = await store.run("evt", async () => { runs += 1; return "again"; });
+  assert.deepEqual(next, { status: "processed", result: "again" });
+  assert.equal(runs, 2);
 });
 
 test("a holder whose claim expired does not delete the new holder's claim when it fails", async () => {

@@ -152,7 +152,12 @@ These are the things a reviewer should know going in. None are hidden.
    compare-and-set / compare-and-delete against its own token, so it can no longer
    overwrite the new holder's result or delete its claim (which used to let a
    *third* caller run as well). It cannot undo the second run itself — a lease
-   cannot. Set `pendingTtl` above the longest effect, or use the Postgres store.
+   cannot. What it can do is tell you: whenever a holder's claim expired before
+   its result write, its call returns `{ status: "processed", lostClaim: true }`.
+   That covers both outcomes of an expired claim: another caller took over (the
+   effect may have run twice), or nobody did and nothing was recorded (the next
+   delivery runs the effect again). Either way the one caller that knows sees it.
+   Set `pendingTtl` above the longest effect, or use the Postgres store.
    Redis eviction policies (`allkeys-*`/`volatile-*`) can also drop a claim under
    memory pressure.
 5. **Stored results must be JSON-serialisable** (Postgres round-trips `result`

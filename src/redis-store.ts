@@ -123,12 +123,15 @@ export function createRedisStore(redis: RedisLike, options: RedisStoreOptions = 
         // expire on its own and surface the error.
         //
         // The write is compare-and-set against our own pending token. If it does
-        // not apply, our claim expired mid-effect and another caller now owns the
-        // key (and may already have recorded its own result). We do not overwrite
-        // that: the effect did run here, so we still report "processed", and the
-        // other caller's record stands. (DESIGN.md, limitation 4.)
-        await redis.setIfValue(k, pending, JSON.stringify({ s: "done", r: result ?? null }), ttlMs);
-        return { status: "processed", result };
+        // not apply, our claim expired mid-effect: another caller may now own the
+        // key (and may already have recorded its own result), or nobody does. We
+        // never overwrite: the effect did run here, so we still report
+        // "processed", and any other caller's record stands. We do flag it
+        // (`lostClaim`): nothing of ours was recorded, so the effect may have run
+        // twice or will run again on redelivery, and only this caller can know.
+        // (DESIGN.md, limitation 4.)
+        const recorded = await redis.setIfValue(k, pending, JSON.stringify({ s: "done", r: result ?? null }), ttlMs);
+        return recorded ? { status: "processed", result } : { status: "processed", result, lostClaim: true };
       }
 
       // Someone else holds the key. Poll until they write the result, or until the
