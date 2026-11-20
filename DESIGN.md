@@ -171,7 +171,11 @@ These are the things a reviewer should know going in. None are hidden.
    transaction-local `lock_timeout` on the claim only): a waiter gives up with a
    clear error and frees its connection, and the provider's redelivery retries.
    Pool size still has to exceed your hot-key concurrency for the timeout to be
-   the limit rather than the pool.
+   the limit rather than the pool. Before the effect runs the claim timeout is
+   reset `TO DEFAULT`, which is the server or role default: a `lock_timeout` your
+   app `SET` on the connection does not apply inside the effect (it is back after
+   commit). To bound the effect's own lock waits, set it per role
+   (`ALTER ROLE ... SET lock_timeout`) or with `SET LOCAL` inside the effect.
 7. **A holder that rolls back hands the key straight to a waiter.** The waiter's
    `INSERT ... ON CONFLICT DO NOTHING` is blocked on the holder's uncommitted row;
    when the holder rolls back, the waiter's insert succeeds and it claims the key
