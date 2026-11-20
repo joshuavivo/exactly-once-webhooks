@@ -46,6 +46,13 @@ follow [Semantic Versioning](https://semver.org/).
   `5s` reads `0` inside the effect, `5s` again after commit). Behaviour unchanged
   since 0.9.0; the comment is corrected and DESIGN limitation 6 says how to bound
   the effect's own lock waits. Found by an adversarial review of this release.
+- **Example: replaying a dead letter that was parked as malformed is refused
+  cleanly.** `replay()` cast the parse result to an event without checking it, so
+  replaying a malformed letter threw a bare `TypeError` (`Cannot read properties of
+  undefined`) from inside the ledger write. Nothing was written and the letter was
+  kept, but the person replaying it got a crash, not a reason. It now returns
+  `400 still malformed: <reason>`, never runs the write, and keeps the letter. Found
+  in an external review.
 
 ## [0.9.0] - 2026-11-20
 
