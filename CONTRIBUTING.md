@@ -32,6 +32,23 @@ be merged — that contract is the whole point.
   discover.
 - **Keep it readable.** The library's value is that you can read all of it.
 
+## How changes land
+
+- Every change goes in through a pull request. `main` is protected: the `tests`
+  workflow (Node 22 and 24, real Postgres and Redis) must pass before a merge,
+  and that applies to the maintainer too.
+- Dependabot opens weekly update PRs for dev dependencies and Actions; they pass
+  the same gate as anything else.
+
+## Releasing
+
+1. Move the `[Unreleased]` notes in `CHANGELOG.md` under a new `## [x.y.z]` heading
+   and set `"version"` in `package.json` to match, in one PR.
+2. After it merges: `git tag vx.y.z && git push origin vx.y.z`.
+3. The `release` workflow reruns the full test gate, refuses a tag that doesn't
+   match `package.json`, and publishes a GitHub Release with that changelog section
+   as the notes and the `npm pack` tarball attached.
+
 ## Reporting a problem
 
 A security issue goes privately through [`SECURITY.md`](SECURITY.md). Anything else

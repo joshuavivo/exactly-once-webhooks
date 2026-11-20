@@ -1,0 +1,15 @@
+# Weekly update PRs for dev dependencies and for the Actions the workflows use.
+# Each one has to pass the same CI as any other change before it can merge.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      dev-dependencies:
+        dependency-type: development
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
