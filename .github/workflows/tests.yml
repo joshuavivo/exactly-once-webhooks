@@ -2,6 +2,8 @@ name: tests
 on:
   push:
   pull_request:
+  # The release workflow calls this, so a release runs the exact same gate.
+  workflow_call:
 permissions:
   contents: read
 jobs:
