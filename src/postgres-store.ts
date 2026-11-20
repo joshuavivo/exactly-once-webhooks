@@ -27,6 +27,13 @@ export type PostgresStoreOptions = {
    *  between the INSERT and the read (e.g. pruned). On Redis it fires on every
    *  holder failure. */
   onRetry?: (info: RetryInfo) => void;
+  /** How long a caller waits for ANOTHER caller's claim on the same key before
+   *  giving up, in ms. Default 5000; 0 waits forever (the pre-0.9 behaviour).
+   *  While it waits, the caller holds a pooled connection, so without a bound one
+   *  slow effect on a hot key can starve the pool for unrelated keys (issue #11).
+   *  It applies only to the claim and the wait, never to your effect's own
+   *  statements. A timed-out caller throws; the provider's redelivery tries again. */
+  lockTimeoutMs?: number;
 };
 
 /**
@@ -40,10 +47,11 @@ export type PostgresStoreOptions = {
  *
  * Requires the schema in schema.sql (a table with a UNIQUE/PRIMARY KEY `key`).
  */
-// Cap on claim retries. A retry only happens when a holder rolled back, after
-// which the next caller normally claims immediately — so reaching this many means
-// an effect is failing deterministically, which should surface as an error, not an
-// unbounded spin. Generous enough never to trip under healthy contention.
+// Cap on claim passes. A holder that rolls back does NOT cause a retry: the
+// waiter's INSERT is blocked on the holder's uncommitted row and simply claims the
+// key when the rollback lands (issue #24). The only way back round the loop is a
+// committed row that disappears between our INSERT and our read (a prune). The cap
+// turns that pathological case into an error instead of an unbounded spin.
 const MAX_CLAIM_ATTEMPTS = 50;
 
 export function createPostgresStore(pool: Pool, options: PostgresStoreOptions = {}): IdempotencyStore<Queryable> {
@@ -54,6 +62,11 @@ export function createPostgresStore(pool: Pool, options: PostgresStoreOptions = 
     throw new Error(`invalid table name: ${JSON.stringify(table)}`);
   }
 
+  const lockTimeoutMs = options.lockTimeoutMs ?? 5000;
+  if (!Number.isInteger(lockTimeoutMs) || lockTimeoutMs < 0) {
+    throw new Error(`lockTimeoutMs must be a non-negative integer, got ${JSON.stringify(lockTimeoutMs)}`);
+  }
+
   async function run<T>(key: string, effect: (ctx: Queryable) => Promise<T>): Promise<Outcome<T>> {
     // A loop, not recursion: each pass either resolves the key or retries because a
     // holder rolled back. Bounded so a key whose holder fails deterministically
@@ -62,6 +75,9 @@ export function createPostgresStore(pool: Pool, options: PostgresStoreOptions = 
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        // Bound the wait on another caller's claim (issue #11). SET LOCAL lasts
+        // only for this transaction; it is reset before the effect runs.
+        await client.query(`SET LOCAL lock_timeout = ${lockTimeoutMs}`);
 
         // Claim the key. ON CONFLICT DO NOTHING means only the first inserter gets
         // a row back; everyone else gets zero rows and knows to wait.
@@ -73,6 +89,9 @@ export function createPostgresStore(pool: Pool, options: PostgresStoreOptions = 
         );
 
         if (claimed.rows.length === 1) {
+          // We hold the key. The effect's own statements get the session default,
+          // not our claim timeout.
+          await client.query("SET LOCAL lock_timeout TO DEFAULT");
           const result = await effect(client);
           await client.query(
             `UPDATE ${table} SET status = 'done', result = $2, completed_at = now() WHERE key = $1`,
@@ -95,14 +114,22 @@ export function createPostgresStore(pool: Pool, options: PostgresStoreOptions = 
         if (row && row.status === "done") {
           return { status: "duplicate", result: row.result as T };
         }
-        // No committed row: a committed row is always 'done' (the 'pending' state
-        // only exists inside the holder's uncommitted transaction), so an absent
-        // row means the holder rolled back. Retry as the first caller next pass.
+        // No committed row. A committed row is always 'done', and a holder's
+        // rollback would already have let our INSERT claim the key, so this is
+        // reached only if a done row vanished between the INSERT and this read
+        // (pruneExpiredKeys ran in between). Try again from the top.
         if (options.onRetry) {
           try { options.onRetry({ key, attempt }); } catch { /* observability must not break the store */ }
         }
       } catch (err) {
         await client.query("ROLLBACK").catch(() => {});
+        if ((err as { code?: string }).code === "55P03") {
+          throw new Error(
+            `timed out after ${lockTimeoutMs}ms waiting for key ${JSON.stringify(key)} ` +
+              "(another caller holds it; the next delivery will retry)",
+            { cause: err },
+          );
+        }
         throw err;
       } finally {
         client.release();
@@ -110,7 +137,7 @@ export function createPostgresStore(pool: Pool, options: PostgresStoreOptions = 
     }
     throw new Error(
       `could not claim key ${JSON.stringify(key)} after ${MAX_CLAIM_ATTEMPTS} attempts; ` +
-        "its holder keeps rolling back (a deterministically failing effect?)",
+        "its row keeps disappearing between claim and read (a prune racing this key?)",
     );
   }
 
