@@ -48,6 +48,29 @@ if (url) {
     },
     makeKey: (name) => `evt_pg_${runId}_${name}`,
   });
+  // Postgres hands a rolled-back claim straight to the waiter: the waiter's
+  // INSERT ... ON CONFLICT DO NOTHING blocks on the holder's uncommitted row and,
+  // when the holder rolls back, inserts and claims. No retry pass happens, so
+  // onRetry stays silent. (CI showed this; the first version of this test assumed
+  // a retry and failed. See the issue on the now-unreachable retry path.)
+  test("[postgres] a rolled-back claim passes straight to the blocked waiter, with no retry", async () => {
+    const pool = await loadPool();
+    if (!pool) throw new Error("DATABASE_URL set but pg could not be loaded");
+    const retries: Array<{ key: string; attempt: number }> = [];
+    const store = createPostgresStore(pool, { onRetry: (i) => retries.push(i) });
+    const key = `evt_pg_${runId}_onretry`;
+    const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    const holder = store.run(key, async () => { await pause(150); throw new Error("holder failed"); });
+    await pause(40); // holder has inserted its pending row; the waiter blocks on FOR UPDATE
+    const waiter = store.run(key, async () => "second try");
+    await assert.rejects(holder, /holder failed/);
+
+    assert.deepEqual(await waiter, { status: "processed", result: "second try" });
+    assert.deepEqual(retries, [], "no retry pass: the blocked INSERT took over the claim");
+    await (pool as unknown as { end(): Promise<void> }).end();
+  });
+
   // Close the SHARED pool the contract used, or its open handles keep the process
   // alive and the CI job hangs. (Runs after the contract tests above.)
   test("close the postgres pool", async () => {

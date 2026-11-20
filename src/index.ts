@@ -1,4 +1,4 @@
-export type { IdempotencyStore, Outcome } from "./types.ts";
+export type { IdempotencyStore, Outcome, RetryInfo } from "./types.ts";
 export { createMemoryStore } from "./memory-store.ts";
 export {
   createPostgresStore,

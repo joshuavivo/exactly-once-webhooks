@@ -233,3 +233,27 @@ test("fractional TTLs reach the adapter as whole milliseconds", async () => {
   await createRedisStore(spy, { ttlSeconds: 1.0001, pendingTtlSeconds: 0.0005 }).run("k", async () => "x");
   assert.deepEqual(seen, [1, 1001]);
 });
+
+// onRetry (issue #7): a waiter whose holder failed reports the retry.
+
+test("onRetry reports a waiter retrying after the holder's effect threw", async () => {
+  const retries: Array<{ key: string; attempt: number }> = [];
+  const store = createRedisStore(createFakeRedis(), { pollIntervalMs: 1, onRetry: (i) => retries.push(i) });
+
+  const holder = store.run("evt", async () => { await pause(20); throw new Error("holder failed"); });
+  await pause(5); // the holder has the claim; the waiter starts polling
+  const waiter = store.run("evt", async () => "second try");
+  await assert.rejects(holder, /holder failed/);
+
+  assert.deepEqual(await waiter, { status: "processed", result: "second try" });
+  assert.deepEqual(retries, [{ key: "evt", attempt: 1 }], "one retry, reported with the caller's key (no prefix)");
+});
+
+test("an onRetry hook that throws does not break the store", async () => {
+  const store = createRedisStore(createFakeRedis(), { pollIntervalMs: 1, onRetry: () => { throw new Error("metrics down"); } });
+  const holder = store.run("evt", async () => { await pause(10); throw new Error("holder failed"); });
+  await pause(3);
+  const waiter = store.run("evt", async () => "ok");
+  await assert.rejects(holder, /holder failed/);
+  assert.deepEqual(await waiter, { status: "processed", result: "ok" });
+});
