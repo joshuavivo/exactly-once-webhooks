@@ -104,7 +104,7 @@ The important corollary, and a real sharp edge:
 
 - **Postgres:** the effect's partial writes are inside the transaction, so a throw
   rolls *them* back too. Retrying is clean.
-- **Memory / non-transactional effects:** there is no transaction. If your effect
+- **Memory / Redis / non-transactional effects:** there is no transaction. If your effect
   does external I/O (charges a card, calls an API) and *then* throws, that I/O is
   not rolled back, and the retry repeats it. The library can only guarantee
   once-ness for work that commits atomically with the idempotency record. For the
@@ -175,8 +175,9 @@ These are the things a reviewer should know going in. None are hidden.
 All three stores are held to one shared behavioural contract in
 [`test/contract.ts`](test/contract.ts): process-once, dedup across repeat
 deliveries, the concurrent double-credit race, independent keys, and retry after a
-thrown effect. The memory store runs it on every push with no services. The
-Postgres store runs the *same* contract when `DATABASE_URL` is set, against a real
-database, with per-run key salting so a durable table does not collide across
-runs. "Any store that honours the contract is valid" is therefore executable, not
+thrown effect. The memory store runs it on every push with no services, and the
+Redis store runs it against an in-process fake. The Postgres and Redis stores run
+the *same* contract against real servers when `DATABASE_URL` / `REDIS_URL` are set
+(CI sets both via service containers), with per-run key salting so durable data
+does not collide across runs. "Any store that honours the contract is valid" is therefore executable, not
 a slogan.

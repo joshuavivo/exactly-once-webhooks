@@ -12,7 +12,7 @@ make db-test                          # + the Postgres version against a real da
 
 | Step | File | What it guarantees | Proven by |
 |---|---|---|---|
-| 1. Signature | `signature.ts` | Only the provider's requests, only recent ones. HMAC over the **raw** body, constant-time compare, timestamp tolerance, secret rotation. | tampered body, wrong secret, missing header, stale timestamp, rotated secret |
+| 1. Signature | `signature.ts` | Only the provider's requests, only recent ones. HMAC over the **raw** body, constant-time compare, timestamp tolerance, several `v1` signatures (the provider signing with an old and a new secret during its rotation). | tampered body, wrong secret, missing header, stale timestamp, two `v1` values |
 | 2. Exactly once | the library's store | One event id runs the ledger write once, even when copies race. | 20 concurrent copies → 1 row (memory **and** Postgres) |
 | 3. Ledger | `ledger.ts`, `ledger.sql`, `pg-ledger.ts` | Append-only. Refunds are reversal rows. On Postgres a trigger rejects UPDATE/DELETE/TRUNCATE, `event_id` and `reverses` are UNIQUE, and the row commits **in the same transaction** as the idempotency key. | insert-then-crash leaves neither row nor key; UPDATE/DELETE/TRUNCATE rejected; second reversal refused by the schema |
 | 4. Dead letter | `handler.ts` | A genuine event that can't be applied is parked for a person and acknowledged, so the provider stops retrying. Replay goes through the same exactly-once path. | 500, 500, then parked; replay after the fix writes once; a failed replay keeps the letter |
@@ -36,7 +36,12 @@ make db-test                          # + the Postgres version against a real da
 It is a teaching-size path, not a product:
 - The failure counter and the dead letters live in memory. In production they are
   a table (or the provider's attempt header), so they survive a restart.
-- One currency, integer cents, no FX, no partial refunds.
+- One currency, integer cents, no FX. Partial refunds are refused (dead-lettered),
+  not silently turned into full reversals.
+- The trigger stops ordinary UPDATE/DELETE/TRUNCATE, including from buggy app
+  code. The table OWNER can still disable or drop it, so in production the app
+  connects as a role that does not own the table and has UPDATE/DELETE revoked;
+  the trigger is the second line, the grants are the first.
 - No HTTP server: `handle(rawBody, signatureHeader)` is what your route calls with
   the unparsed body (in Express, `express.raw({ type: "application/json" })`).
 

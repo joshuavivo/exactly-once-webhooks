@@ -213,3 +213,23 @@ test("a holder whose claim expired does not delete the new holder's claim when i
   assert.deepEqual(await third, { status: "duplicate", result: "second" });
   assert.equal(runs, 1, "the effect ran once across the second and third callers");
 });
+
+test("bad TTLs are refused when the store is created, not after an effect ran", () => {
+  const r = createFakeRedis();
+  for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.throws(() => createRedisStore(r, { ttlSeconds: bad }), /ttlSeconds must be a positive number/);
+    assert.throws(() => createRedisStore(r, { pendingTtlSeconds: bad }), /pendingTtlSeconds must be a positive number/);
+  }
+});
+
+test("fractional TTLs reach the adapter as whole milliseconds", async () => {
+  const seen: number[] = [];
+  const base = createFakeRedis();
+  const spy: RedisLike = {
+    ...base,
+    async setClaim(k, v, ms) { seen.push(ms); return base.setClaim(k, v, ms); },
+    async setIfValue(k, e, v, ms) { seen.push(ms); return base.setIfValue(k, e, v, ms); },
+  };
+  await createRedisStore(spy, { ttlSeconds: 1.0001, pendingTtlSeconds: 0.0005 }).run("k", async () => "x");
+  assert.deepEqual(seen, [1, 1001]);
+});
