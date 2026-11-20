@@ -19,7 +19,8 @@
   "scripts": {
     "test": "node --test",
     "typecheck": "tsc --noEmit",
-    "build": "tsc -p tsconfig.build.json"
+    "build": "tsc -p tsconfig.build.json",
+    "bench": "node bench/bench.ts"
   },
   "keywords": [
     "webhook",
