@@ -19,6 +19,11 @@ npm install exactly-once-webhooks
 
 No runtime dependencies. Node 22.18+ (it ships as TypeScript and compiled JS).
 
+**The whole payment path in one place:** [`examples/payment-path`](examples/payment-path)
+verifies the signature, credits exactly once, writes an append-only ledger row in
+the same Postgres transaction, and dead-letters what it can't apply, with a test
+for each step. `node examples/payment-path/demo.ts` runs it with no services.
+
 ## The problem, in one test
 
 ```ts
