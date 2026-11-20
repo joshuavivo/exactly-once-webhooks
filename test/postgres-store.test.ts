@@ -62,7 +62,7 @@ if (url) {
     const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
     const holder = store.run(key, async () => { await pause(150); throw new Error("holder failed"); });
-    await pause(40); // holder has inserted its pending row; the waiter blocks on FOR UPDATE
+    await pause(40); // holder has inserted its pending row; the waiter's INSERT blocks on it
     const waiter = store.run(key, async () => "second try");
     await assert.rejects(holder, /holder failed/);
 

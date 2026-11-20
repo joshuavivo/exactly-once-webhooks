@@ -42,17 +42,20 @@ Two distinct failure modes have to be closed, and they are not the same bug:
 
 ### Postgres store — the one for production
 
-The guarantee rests on two database primitives, not on application logic:
+The guarantee rests on the database, not on application logic:
 
 - **`INSERT ... ON CONFLICT (key) DO NOTHING RETURNING key`** claims the key.
-  Exactly one concurrent transaction gets a row back; every other gets zero rows.
+  Exactly one transaction at a time holds the key; a concurrent one gets zero rows
+  unless the holder rolls back.
   That is the atomic election of "who is the first delivery" — the database, not
   the app, decides, and it decides once.
-- **`SELECT ... FOR UPDATE`** is how the losers wait. A transaction that got zero
-  rows from the insert reads the row `FOR UPDATE`, which *blocks* until the
-  winner's transaction ends. On the winner's `COMMIT` it reads `status = 'done'`
-  and returns the stored result. On the winner's `ROLLBACK` (its effect threw)
-  the row is gone, and the waiter retries as the new first caller.
+- **The losers wait inside that same `INSERT`.** While the winner's row is
+  uncommitted, a concurrent insert of the same key blocks until the winner's
+  transaction ends. On the winner's `COMMIT` the loser's insert returns zero rows,
+  and the loser reads the committed row (`SELECT ... FOR UPDATE`, which no longer
+  has anything to wait for) and returns the stored result. On the winner's
+  `ROLLBACK` (its effect threw) the loser's insert succeeds and it becomes the new
+  holder (limitation 7).
 
 The decisive property: **the effect runs inside the same transaction as the
 idempotency record.** Your `UPDATE accounts ...` and the `status = 'done'` write
