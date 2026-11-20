@@ -161,14 +161,19 @@ These are the things a reviewer should know going in. None are hidden.
    duration** in the Postgres store, because the effect runs inside the
    transaction. Keep effects short; do slow, non-transactional work after `run`
    returns, keyed by the result it hands back. Several waiters each hold their own
-   pooled connection while blocked, so one hot key can starve a small pool; a
-   `lock_timeout`/`statement_timeout` to bound that is on the roadmap.
-7. **A holder that keeps rolling back is bounded, then errors.** When a holder's
-   effect throws, its claim is released and the next caller retries. This is a
-   bounded loop (`MAX_CLAIM_ATTEMPTS`, 50), not unbounded recursion: a key whose
-   effect fails deterministically raises a clear error after the cap rather than
-   retrying forever. Under healthy contention one delivery wins immediately and the
-   cap is never approached.
+   pooled connection while blocked, so one hot key could starve a small pool.
+   Since 0.9 that wait is bounded by `lockTimeoutMs` (default 5 s, a
+   transaction-local `lock_timeout` on the claim only): a waiter gives up with a
+   clear error and frees its connection, and the provider's redelivery retries.
+   Pool size still has to exceed your hot-key concurrency for the timeout to be
+   the limit rather than the pool.
+7. **A holder that rolls back hands the key straight to a waiter.** The waiter's
+   `INSERT ... ON CONFLICT DO NOTHING` is blocked on the holder's uncommitted row;
+   when the holder rolls back, the waiter's insert succeeds and it claims the key
+   (verified against a real Postgres, issue #24). The claim loop's retry pass only
+   runs if a done row vanishes between a caller's INSERT and its read (a prune
+   racing that key), and is capped (`MAX_CLAIM_ATTEMPTS`, 50) so even that case
+   errors instead of spinning.
 
 ## Testing
 
