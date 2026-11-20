@@ -11,6 +11,8 @@ export {
 export {
   createRedisStore,
   fromNodeRedis,
+  SET_IF_VALUE_LUA,
+  DEL_IF_VALUE_LUA,
   type RedisLike,
   type RedisStoreOptions,
 } from "./redis-store.ts";

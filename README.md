@@ -131,8 +131,11 @@ expires keys on its own.
 A store backed by Redis and safe across processes. The claim is an atomic
 `SET ... NX PX`; the TTL (`options.ttlSeconds`, default one day) is both the dedup
 window and the retention policy, so there is nothing to prune. `redis` is a small
-four-method shape (`setClaim`/`setValue`/`get`/`del`); `fromNodeRedis(client)`
-adapts a node-redis v4+ client to it:
+four-method shape (`setClaim`/`setIfValue`/`get`/`delIfValue`); `fromNodeRedis(client)`
+adapts a node-redis v4+ client to it. Each claim carries a random ownership token,
+and the result write and the release are compare-and-set / compare-and-delete Lua
+scripts (exported as `SET_IF_VALUE_LUA` / `DEL_IF_VALUE_LUA` for other adapters), so
+a holder whose claim expired can never clobber the caller who took over:
 
 ```ts
 import { createClient } from "redis";
