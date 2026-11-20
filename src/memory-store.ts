@@ -38,11 +38,16 @@ export function createMemoryStore(options: MemoryStoreOptions = {}): Idempotency
   // at the end, so the front of the map is the least-recently-completed key —
   // the one to drop first when we are over the cap.
   const entries = new Map<string, Entry>();
+  // How many entries are "done". Kept as a running count so a completion costs
+  // O(1) bookkeeping instead of a scan of the whole map. Only two places change
+  // it: a key completing (+1) and eviction removing a done key (-1). Deleting a
+  // pending key (the effect threw) leaves it alone.
+  let done = 0;
 
   function evictIfNeeded(): void {
     if (maxEntries === undefined) return;
-    let done = 0;
-    for (const e of entries.values()) if (e.status === "done") done += 1;
+    // The front of the map holds the oldest entries. Pending keys are skipped,
+    // so this walks past at most the keys currently in flight.
     for (const [key, entry] of entries) {
       if (done <= maxEntries) break;
       if (entry.status === "done") {
@@ -85,6 +90,7 @@ export function createMemoryStore(options: MemoryStoreOptions = {}): Idempotency
       // eviction), then trim back to the cap.
       entries.delete(key);
       entries.set(key, { status: "done", result, settled });
+      done += 1;
       evictIfNeeded();
       return { status: "processed", result };
     } catch (err) {

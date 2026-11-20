@@ -90,8 +90,20 @@ export function createRedisStore(redis: RedisLike, options: RedisStoreOptions = 
   };
   const ttlMs = positive("ttlSeconds", options.ttlSeconds ?? 86_400);
   const pendingTtlMs = positive("pendingTtlSeconds", options.pendingTtlSeconds ?? 30);
+  // The wait settings too: unchecked, maxWaitMs NaN never times out (`elapsed > NaN`
+  // is always false), a negative one gives up on the first look, and a NaN or
+  // negative poll interval is silently treated as ~1 ms. 0 is allowed: re-check
+  // as fast as the event loop allows. maxWaitMs may be Infinity (wait for as long
+  // as the holder's claim lives); a poll interval may not (setTimeout treats
+  // Infinity as ~1 ms).
   const pollIntervalMs = options.pollIntervalMs ?? 25;
+  if (!Number.isFinite(pollIntervalMs) || pollIntervalMs < 0) {
+    throw new Error(`pollIntervalMs must be a finite, non-negative number of ms, got ${String(pollIntervalMs)}`);
+  }
   const maxWaitMs = options.maxWaitMs ?? 5000;
+  if (Number.isNaN(maxWaitMs) || maxWaitMs < 0) {
+    throw new Error(`maxWaitMs must be a non-negative number of ms, got ${String(maxWaitMs)}`);
+  }
 
   async function run<T>(key: string, effect: (ctx: undefined) => Promise<T>): Promise<Outcome<T>> {
     const k = prefix + key;
@@ -123,12 +135,15 @@ export function createRedisStore(redis: RedisLike, options: RedisStoreOptions = 
         // expire on its own and surface the error.
         //
         // The write is compare-and-set against our own pending token. If it does
-        // not apply, our claim expired mid-effect and another caller now owns the
-        // key (and may already have recorded its own result). We do not overwrite
-        // that: the effect did run here, so we still report "processed", and the
-        // other caller's record stands. (DESIGN.md, limitation 4.)
-        await redis.setIfValue(k, pending, JSON.stringify({ s: "done", r: result ?? null }), ttlMs);
-        return { status: "processed", result };
+        // not apply, our claim expired mid-effect: another caller may now own the
+        // key (and may already have recorded its own result), or nobody does. We
+        // never overwrite: the effect did run here, so we still report
+        // "processed", and any other caller's record stands. We do flag it
+        // (`lostClaim`): nothing of ours was recorded, so the effect may have run
+        // twice or will run again on redelivery, and only this caller can know.
+        // (DESIGN.md, limitation 4.)
+        const recorded = await redis.setIfValue(k, pending, JSON.stringify({ s: "done", r: result ?? null }), ttlMs);
+        return recorded ? { status: "processed", result } : { status: "processed", result, lostClaim: true };
       }
 
       // Someone else holds the key. Poll until they write the result, or until the
