@@ -39,7 +39,7 @@ jobs:
       DATABASE_URL: postgres://eow:eow@localhost:5432/eow
       REDIS_URL: redis://localhost:6379
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}
