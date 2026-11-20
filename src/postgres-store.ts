@@ -19,9 +19,13 @@ export interface Pool {
 export type PostgresStoreOptions = {
   /** Table that holds the idempotency keys. Default "idempotency_keys". */
   table?: string;
-  /** Called when a waiter has to retry because the holder rolled back. Optional,
-   *  a no-op when absent; an exception from it is ignored so observability can
-   *  never break the store. Wire it to a log line or a counter. */
+  /** Called when a waiter has to retry its claim. Optional, a no-op when absent;
+   *  an exception from it is ignored so observability can never break the store.
+   *  Note: on Postgres this is rare. A waiter's INSERT blocks on the holder's
+   *  uncommitted row and claims the key directly if the holder rolls back, so a
+   *  rollback does NOT cause a retry; this fires only if a committed row vanishes
+   *  between the INSERT and the read (e.g. pruned). On Redis it fires on every
+   *  holder failure. */
   onRetry?: (info: RetryInfo) => void;
 };
 
