@@ -7,6 +7,10 @@ follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Benchmark** (`npm run bench`, `bench` workflow; closes #5): distinct-key
+  throughput and p50/p99, and the hot-key case with an exactly-once assertion,
+  on the memory store and real Postgres + Redis. Numbers in the README link the
+  run that produced them.
 - **`examples/payment-path`: the whole payment path in one place.** Signature
   verification (raw-body HMAC, constant-time, timestamp tolerance, rotation),
   exactly-once via the store, an append-only ledger, and a dead-letter path with

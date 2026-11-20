@@ -158,6 +158,30 @@ is written. Use it when the effect is itself idempotent, or when the dedup windo
 the whole requirement; use Postgres when your write must be atomic with the
 "handled" record. [`DESIGN.md`](DESIGN.md) spells out the trade-offs.
 
+## Measured, not claimed
+
+From [this run](https://github.com/joshuavivo/exactly-once-webhooks/actions/runs/44756603468) on a
+GitHub-hosted runner (Node 22, linux/x64) against real Postgres 16 and Redis 7.
+Reproduce with `npm run bench` (add `DATABASE_URL` / `REDIS_URL` for the servers).
+
+| store | distinct keys, calls/s | p50 | p99 | 100 copies of one event → effect runs | all 100 answered in |
+|---|---:|---:|---:|---:|---:|
+| memory | 494,325 | 0.06 ms | 0.23 ms | 1 | 19.7 ms |
+| postgres | 1,902 | 8.9 ms | 120 ms | 1 | 150 ms |
+| redis | 43,220 | 0.66 ms | 3.4 ms | 1 | 22.6 ms |
+
+How to read it:
+- **The column that matters is "effect runs": 1 every time.** The benchmark fails
+  the run if it is ever more.
+- **Postgres pays for its guarantee.** Each call is a transaction with a row lock,
+  so it's ~2k calls/s here with 32 in flight, and a p99 of 120 ms. In return, the
+  effect commits atomically with the record. A shared CI runner is noisy, so treat
+  the tail as an upper bound, not a promise.
+- **Hot key ≈ the effect's own time.** With a 20 ms effect, the 99 waiters get their
+  answer about when the one real run finishes: memory and Redis add ~0–3 ms.
+  Postgres adds more, because each waiter blocks on `FOR UPDATE` holding a
+  connection (DESIGN limitation 6, issue #11).
+
 ## What this is not
 
 - Not a queue or a retry scheduler — it makes *your* handler safe to call more
