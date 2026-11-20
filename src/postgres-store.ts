@@ -77,7 +77,9 @@ export function createPostgresStore(pool: Pool, options: PostgresStoreOptions = 
         await client.query("BEGIN");
         // Bound the wait on another caller's claim (issue #11). SET LOCAL lasts
         // only for this transaction; it is reset before the effect runs.
-        await client.query(`SET LOCAL lock_timeout = ${lockTimeoutMs}`);
+        // set_config(name, value, is_local=true) is SET LOCAL with the value bound
+        // as a parameter, so no number is ever spliced into the SQL text.
+        await client.query("SELECT set_config('lock_timeout', $1, true)", [String(lockTimeoutMs)]);
 
         // Claim the key. ON CONFLICT DO NOTHING means only the first inserter gets
         // a row back; everyone else gets zero rows and knows to wait.
