@@ -1,9 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { createPostgresStore, pruneExpiredKeys, type Pool } from "../src/postgres-store.ts";
 import { runContract } from "./contract.ts";
+import { loadSchema } from "./pg-schema.ts";
 
 // These tests run against a real Postgres only when DATABASE_URL is set (CI sets it
 // via a service container); otherwise they skip, so a plain `npm test` needs no
@@ -12,24 +11,26 @@ const url = process.env.DATABASE_URL;
 
 async function loadPool(): Promise<Pool | null> {
   if (!url) return null;
+  // Only a missing `pg` module means "can't run here". Any other failure (the
+  // schema load, the connection) must surface with its real message, not be
+  // swallowed into a vague "pg could not be loaded".
+  let pg: { default: { Pool: new (cfg: { connectionString: string }) => unknown } };
   try {
     // Indirect specifier so the type-checker doesn't hard-resolve `pg`.
     const specifier = "pg";
-    const pg = (await import(specifier)) as { default: { Pool: new (cfg: { connectionString: string }) => unknown } };
-    const pool = new pg.default.Pool({ connectionString: url }) as unknown as Pool;
-    // Ensure the table exists. schema.sql is CREATE TABLE IF NOT EXISTS, so this is
-    // idempotent and makes the CI run self-contained (no psql step needed).
-    const sql = readFileSync(fileURLToPath(new URL("../schema.sql", import.meta.url)), "utf8");
-    const client = await pool.connect();
-    try {
-      await client.query(sql);
-    } finally {
-      client.release();
-    }
-    return pool;
+    pg = (await import(specifier)) as typeof pg;
   } catch {
     return null;
   }
+  const pool = new pg.default.Pool({ connectionString: url }) as unknown as Pool;
+  // Ensure the table exists, so the CI run is self-contained (no psql step).
+  const client = await pool.connect();
+  try {
+    await loadSchema(client, [new URL("../schema.sql", import.meta.url)]);
+  } finally {
+    client.release();
+  }
+  return pool;
 }
 
 // The Postgres store is held to the exact same behavioural contract as the memory
