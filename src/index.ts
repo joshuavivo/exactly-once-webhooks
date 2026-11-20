@@ -11,6 +11,7 @@ export {
 export {
   createRedisStore,
   fromNodeRedis,
+  fromIoRedis,
   SET_IF_VALUE_LUA,
   DEL_IF_VALUE_LUA,
   type RedisLike,
