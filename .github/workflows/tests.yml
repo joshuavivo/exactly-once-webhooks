@@ -1,6 +1,9 @@
 name: tests
 on:
+  # main only: a PR branch push is already covered by pull_request, and a tag is
+  # covered by the release workflow calling this one. Without the filter both ran.
   push:
+    branches: [main]
   pull_request:
   # The release workflow calls this, so a release runs the exact same gate.
   workflow_call:
@@ -48,3 +51,28 @@ jobs:
       # The contract runs against the memory store, and — because DATABASE_URL and
       # REDIS_URL are set — against the real Postgres and Redis services too.
       - run: npm test
+
+  # The README tells people to install the packed tarball. Prove that exact
+  # artifact installs into a fresh project and works, on every change.
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run build && npm pack
+      - name: Install the tarball into a fresh project and use it
+        run: |
+          mkdir "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
+          npm init -y >/dev/null
+          npm install "$GITHUB_WORKSPACE"/exactly-once-webhooks-*.tgz
+          node --input-type=module -e '
+            import { createMemoryStore } from "exactly-once-webhooks";
+            const s = createMemoryStore();
+            const a = await s.run("evt", async () => 1);
+            const b = await s.run("evt", async () => 2);
+            if (a.status !== "processed" || b.status !== "duplicate" || b.result !== 1) process.exit(1);
+            console.log("installed package works:", JSON.stringify([a, b]));
+          '
