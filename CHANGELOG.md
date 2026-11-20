@@ -23,6 +23,13 @@ follow [Semantic Versioning](https://semver.org/).
   (`lockTimeoutMs` is validated as a non-negative integer), but it was the one
   statement in the store built by string interpolation. Same behaviour; the
   `lockTimeoutMs` test now also checks the bound value. Found in an external review.
+- **Memory store: completing a key no longer scans the whole map.** With
+  `maxEntries` set, every completion used to count all done entries before
+  evicting; it now keeps a running count, so the bookkeeping is O(1) and eviction
+  only walks past keys still in flight. Which key is evicted is unchanged, and a new
+  test pins that order across a failed effect and re-delivered keys. Locally, 40k
+  completions with a 20k cap went from ~1.0 s to ~0.08 s. Found in an external
+  review.
 
 ### Fixed
 - **Redis: `pollIntervalMs` and `maxWaitMs` are validated when the store is
