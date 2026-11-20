@@ -113,6 +113,18 @@ if (!url) {
     assert.equal(await pgBalance(await db(), acct), 0);
   });
 
+  test("pg: a partial refund is dead-lettered, the charge stays whole", async () => {
+    const pool = await poolP;
+    const acct = `acct_${run}_partial`;
+    const h = createPaymentHandler({ secret: SECRET, store: createPostgresStore(pool), apply: applyToPgLedger, now: () => NOW });
+    const c = event("partial", acct);
+    const cs = signed(c);
+    await h.handle(cs.body, cs.sig);
+    const r = signed({ id: `evt_${run}_partial_r`, type: "charge.refunded", data: { charge: c.data.charge, account: acct, amount_cents: 1000 } });
+    assert.equal((await h.handle(r.body, r.sig)).body, "dead-lettered");
+    assert.equal(await pgBalance(await db(), acct), 5000);
+  });
+
   test("pg: close the pool", async () => {
     await (await poolP).end();
   });
