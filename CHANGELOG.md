@@ -38,6 +38,17 @@ follow [Semantic Versioning](https://semver.org/).
   test pins that order across a failed effect and re-delivered keys. Locally, 40k
   completions with a 20k cap went from ~1.0 s to ~0.08 s. Found in an external
   review.
+- **Every store returns the same JSON copy for a duplicate.** The memory store
+  used to hand a duplicate the first run's live object, while Postgres and Redis
+  returned a JSON copy (a `Date` as its ISO string, `undefined` as `null`), so code
+  tested against the memory store could behave differently in production. The
+  memory store now keeps results as JSON too, so a result JSON can't hold (a
+  `BigInt`, a cycle) fails in tests the way it fails in production. A function or
+  `Symbol` result, which `JSON.stringify` drops, now comes back as `null` from
+  every store, as it already did from Postgres; before, the memory store returned
+  the live value and Redis returned `undefined`. A new contract test pins this for
+  every store; DESIGN limitation 5 says what each store does. The call that ran
+  the effect still gets its own value back. Found in an external review.
 
 ### Fixed
 - **Redis: `pollIntervalMs` and `maxWaitMs` are validated when the store is

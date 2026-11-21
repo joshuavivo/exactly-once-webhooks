@@ -21,6 +21,9 @@ export type Outcome<T> = {
    * "processed" — this call ran the effect; `result` is what it returned.
    * "duplicate" — the effect had already run for this key; `result` is the
    *               value the first run stored, returned without running again.
+   *               Every store keeps it as JSON, so a duplicate gets the JSON copy:
+   *               a Date comes back as its ISO string, undefined as null, and a
+   *               class instance as a plain object. Return plain data.
    */
   status: "processed" | "duplicate";
   result: T;
