@@ -8,10 +8,10 @@ A payment provider retries a webhook until it gets a `2xx`, so the same
 the customer, the customer is credited two or three times. Worse, two deliveries
 can land at the same instant and race past a naive "have I seen this yet?" check.
 
-This library ties the work to the event's own id and lets the storage layer
-guarantee it runs once — with a Postgres store that holds up across many servers, a
-Redis store for when the effect is idempotent, and an in-memory store for tests and
-single-process use.
+This library ties the work to the event's own id and lets the store decide who
+runs it. On Postgres the effect's write and its "done" record commit in one
+transaction, across many servers. On Redis it is a lease, for effects that are
+idempotent themselves. The in-memory store is for tests and one process.
 
 Not on the npm registry yet. Install the packed release from GitHub (CI installs
 this exact tarball into a fresh project and imports it on every change):
@@ -186,21 +186,24 @@ the whole requirement; use Postgres when your write must be atomic with the
 
 ## Measured, not claimed
 
-From [this run](https://github.com/joshuavivo/exactly-once-webhooks/actions/runs/44756603468) on a
-GitHub-hosted runner (Node 22, linux/x64) against real Postgres 16 and Redis 7.
+From [this run](https://github.com/joshuavivo/exactly-once-webhooks/actions/runs/44785460964) of
+`main` (commit `d79bc75`) on a GitHub-hosted runner (Node 22, linux/x64) against real
+Postgres 16 and Redis 7. Throughput and latency vary a lot between runners (an
+earlier run measured Postgres at 1,902 calls/s and a 120 ms p99); the "effect runs"
+column is the one that doesn't move.
 Reproduce with `npm run bench` (add `DATABASE_URL` / `REDIS_URL` for the servers).
 
 | store | distinct keys, calls/s | p50 | p99 | 100 copies of one event → effect runs | all 100 answered in |
 |---|---:|---:|---:|---:|---:|
-| memory | 494,325 | 0.06 ms | 0.23 ms | 1 | 19.7 ms |
-| postgres | 1,902 | 8.9 ms | 120 ms | 1 | 150 ms |
-| redis | 43,220 | 0.66 ms | 3.4 ms | 1 | 22.6 ms |
+| memory | 667,924 | 0.04 ms | 0.22 ms | 1 | 19.5 ms |
+| postgres | 5,733 | 5.3 ms | 10.9 ms | 1 | 51.0 ms |
+| redis | 50,405 | 0.56 ms | 2.7 ms | 1 | 22.6 ms |
 
 How to read it:
 - **The column that matters is "effect runs": 1 every time.** The benchmark fails
   the run if it is ever more.
 - **Postgres pays for its guarantee.** Each call is a transaction with a row lock,
-  so it's ~2k calls/s here with 32 in flight, and a p99 of 120 ms. In return, the
+  so it's ~5.7k calls/s here with 32 in flight, and a p99 of ~11 ms. In return, the
   effect commits atomically with the record. A shared CI runner is noisy, so treat
   the tail as an upper bound, not a promise.
 - **Hot key ≈ the effect's own time.** With a 20 ms effect, the 99 waiters get their
