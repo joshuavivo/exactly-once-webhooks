@@ -160,7 +160,9 @@ export function createRedisStore(redis: RedisLike, options: RedisStoreOptions = 
         }
         const parsed = JSON.parse(raw) as { s: "pending" | "done"; r?: unknown; t?: string };
         if (parsed.s === "done") {
-          return { status: "duplicate", result: parsed.r as T };
+          // `?? null`: a function or Symbol result was dropped by JSON.stringify,
+          // so `r` is missing; report null, as the Postgres and memory stores do.
+          return { status: "duplicate", result: (parsed.r ?? null) as T };
         }
         if (Date.now() - start > maxWaitMs) {
           throw new Error(`timed out after ${maxWaitMs}ms waiting for key ${JSON.stringify(key)}`);
