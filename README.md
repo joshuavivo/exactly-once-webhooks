@@ -17,7 +17,7 @@ Not on the npm registry yet. Install the packed release from GitHub (CI installs
 this exact tarball into a fresh project and imports it on every change):
 
 ```
-npm install https://github.com/joshuavivo/exactly-once-webhooks/releases/download/v0.9.0/exactly-once-webhooks-0.9.0.tgz
+npm install https://github.com/joshuavivo/exactly-once-webhooks/releases/download/v0.10.0/exactly-once-webhooks-0.10.0.tgz
 ```
 
 No runtime dependencies. Node 22.18+ (it ships as TypeScript and compiled JS).
