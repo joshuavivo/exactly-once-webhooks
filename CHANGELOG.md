@@ -16,6 +16,8 @@ follow [Semantic Versioning](https://semver.org/).
   outbox paragraph under "Alternatives" covers. The API docs (README and the
   `IdempotencyStore` comments in `types.ts`) no longer say "at most once" without
   the store's limits, and the concurrent-call line now notes the Redis lease.
+- **Docs: the benchmark notes no longer point at #11 as open.** The Postgres waiter
+  cost now says the wait has been bounded by `lockTimeoutMs` since 0.9.
 
 ## [0.10.0] - 2026-11-21
 

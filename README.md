@@ -224,7 +224,8 @@ How to read it:
   Redis row uses `pollIntervalMs: 2` (bench.ts); at the default of 25 a waiter can
   add up to ~25 ms, the cost of polling instead of blocking.
   Postgres adds more, because each waiter blocks in its `INSERT` holding a
-  connection (DESIGN limitation 6, issue #11).
+  connection (DESIGN limitation 6). Since 0.9 that wait is bounded by
+  `lockTimeoutMs` (#11).
 
 ## What this is not
 
