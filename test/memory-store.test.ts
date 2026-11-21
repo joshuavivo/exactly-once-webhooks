@@ -97,3 +97,14 @@ test("maxEntries rejects a non-positive or non-integer value", () => {
   assert.throws(() => createMemoryStore({ maxEntries: -3 }), /positive integer/);
   assert.throws(() => createMemoryStore({ maxEntries: 2.5 }), /positive integer/);
 });
+
+test("a result JSON can't hold fails here, in tests, the way it would in production", async () => {
+  // Postgres would roll the whole transaction back and Redis would leave the claim
+  // to expire; either way the run fails. The memory store used to keep the raw
+  // value, so a BigInt result passed every test and only failed in production.
+  const store = createMemoryStore();
+  await assert.rejects(() => store.run("big", async () => 10n), /BigInt/);
+  // The run failed, so the key is free and a corrected effect can run.
+  const ok = await store.run("big", async () => "10");
+  assert.deepEqual(ok, { status: "processed", result: "10" });
+});

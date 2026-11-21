@@ -79,6 +79,32 @@ export function runContract({ label, makeStore, makeKey }: ContractHarness): voi
     }
   });
 
+  test(`[${label}] a duplicate gets the stored JSON copy of the first result, in every store`, async () => {
+    // Postgres and Redis store the result as JSON, so a duplicate gets it back the
+    // way JSON gives it: a Date as its ISO string, undefined as null. The memory
+    // store must hand back the same shape, or code tested against it behaves
+    // differently in production.
+    const store = await makeStore();
+    const key = makeKey("json-copy");
+    const first = await store.run(key, async () => ({ at: new Date(0), n: 1 }));
+    assert.ok(first.result instanceof Object && (first.result as { at: unknown }).at instanceof Date,
+      "the run that executed the effect gets its own return value back, untouched");
+    const again = await store.run(key, async () => ({ at: new Date(1), n: 2 }));
+    assert.deepEqual(again, { status: "duplicate", result: { at: "1970-01-01T00:00:00.000Z", n: 1 } });
+
+    const key2 = makeKey("json-undefined");
+    await store.run(key2, async () => undefined);
+    const again2 = await store.run(key2, async () => "never");
+    assert.deepEqual(again2, { status: "duplicate", result: null });
+
+    // A function is not JSON; JSON.stringify drops it. Every store reports null
+    // for it, and later duplicates keep working.
+    const key3 = makeKey("json-function");
+    await store.run(key3, async () => () => 1);
+    assert.deepEqual(await store.run(key3, async () => "never"), { status: "duplicate", result: null });
+    assert.deepEqual(await store.run(key3, async () => "never"), { status: "duplicate", result: null });
+  });
+
   test(`[${label}] different keys are independent`, async () => {
     const store = await makeStore();
     const a = await store.run(makeKey("ind_a"), async () => "a");

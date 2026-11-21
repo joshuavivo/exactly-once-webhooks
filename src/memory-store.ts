@@ -2,7 +2,7 @@ import type { IdempotencyStore, Outcome } from "./types.ts";
 
 type Entry = {
   status: "pending" | "done";
-  result?: unknown;
+  result?: string; // the JSON text, as Postgres and Redis keep it
   // Every caller for a key awaits this, so concurrent calls serialise behind the
   // first one instead of all running the effect.
   settled: Promise<void>;
@@ -71,7 +71,10 @@ export function createMemoryStore(options: MemoryStoreOptions = {}): Idempotency
       const existing = entries.get(key);
       if (!existing) break; // no holder: we are the one that claims, below
       if (existing.status === "done") {
-        return { status: "duplicate", result: existing.result as T };
+        // Parsed from the stored JSON, like Postgres and Redis: a duplicate gets a
+        // JSON copy (a Date comes back as a string, undefined as null), never the
+        // first run's live object.
+        return { status: "duplicate", result: JSON.parse(existing.result as string) as T };
       }
       await existing.settled; // pending: wait, then look again (done / gone / a new holder)
     }
@@ -86,10 +89,14 @@ export function createMemoryStore(options: MemoryStoreOptions = {}): Idempotency
 
     try {
       const result = await effect(undefined);
+      // Store the result as JSON, as the durable stores do. A result JSON can't
+      // hold at all (a BigInt, a cycle) throws here, so it fails in tests instead of only
+      // in production; the catch below frees the key, as for a failed effect.
+      const stored = JSON.stringify(result ?? null) ?? "null"; // a function or Symbol stringifies to undefined; store null, as Postgres does
       // Re-insert at the tail so the map's order is completion order (for LRU
       // eviction), then trim back to the cap.
       entries.delete(key);
-      entries.set(key, { status: "done", result, settled });
+      entries.set(key, { status: "done", result: stored, settled });
       done += 1;
       evictIfNeeded();
       return { status: "processed", result };
