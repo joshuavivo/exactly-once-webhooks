@@ -8,13 +8,21 @@ money moving through a webhook, read the limitations section before the rest.
 
 > Given an **at-least-once** delivery channel, run a side effect **exactly once**
 > per key, and make every later delivery observe the first run's result.
+>
+> Fully on Postgres, for the writes the effect makes through the transaction it is
+> given, for as long as the key is kept (limitation 1). Redis is a lease: an effect
+> that outlives it can run twice (limitation 4), and a crash between the effect and
+> its result write lets the next delivery run it again (limitation 3). Memory holds
+> within one process and its `maxEntries` window (limitation 2).
 
 "Exactly once" is about *processing*, not *delivery*. A payment provider will
 deliver the same event as many times as it takes to get a `2xx`; that is not a
 bug to be fixed, it is the contract of every real webhook. What must happen once
-is the *effect* — crediting the account, inserting the ledger row, calling the
-downstream API. This library moves the once-ness from the network (impossible) to
-the storage layer (a solved problem), keyed by the event's own stable id.
+is the *effect*: crediting the account, inserting the ledger row. This library moves
+the once-ness from the network (impossible) to the storage layer, keyed by the
+event's own stable id. A call to a downstream API is an effect too, but no store can
+make it happen once, because it isn't rolled back with the transaction; the outbox
+pattern under "Alternatives" covers it.
 
 ```mermaid
 flowchart TD

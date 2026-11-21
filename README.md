@@ -13,6 +13,15 @@ runs it. On Postgres the effect's write and its "done" record commit in one
 transaction, across many servers. On Redis it is a lease, for effects that are
 idempotent themselves. The in-memory store is for tests and one process.
 
+**"Exactly once" here means the effect, not the delivery.** Delivery stays
+at-least-once: the provider retries until it gets a `2xx`, and no library changes
+that. What this makes happen once is your handler's work, as strongly as the store
+allows: on Postgres, the database writes your effect makes through the transaction
+commit together with the "done" record. A call to an outside API from inside the
+effect is not covered, because it can't be rolled back; use an outbox for those.
+[DESIGN.md](DESIGN.md#the-guarantee-stated-precisely) states the guarantee
+precisely, store by store.
+
 Not on the npm registry yet. Install the packed release from GitHub (CI installs
 this exact tarball into a fresh project and imports it on every change):
 
@@ -97,19 +106,23 @@ other didn't.
 
 ### `store.run(key, effect)`
 
-Runs `effect` at most once for `key`.
+Runs `effect` once for `key`, within the limits of the store: fully on Postgres
+for the writes made through its transaction (inside the retention window you prune
+to), as a lease on Redis, within one process (and `maxEntries`) in memory.
+[DESIGN.md](DESIGN.md#the-guarantee-stated-precisely) has the exact statement.
 
 - First call for a key: runs `effect`, stores the result, returns
   `{ status: "processed", result }`. (Redis only: if the claim expired while the
   effect ran, the result is not stored and the call adds `lostClaim: true`; see the
   Redis store below.)
 - Later calls for the same key: return `{ status: "duplicate", result }` without
-  running `effect` again.
-- Concurrent calls for the same key: exactly one runs the effect; the rest wait
-  and return `duplicate`. (Redis waiters give up after `maxWaitMs`, default 5 s,
-  and throw. If a holder crashed, its claim blocks the key until `pendingTtl`,
-  default 30 s, lapses, so redeliveries in that window fail and are retried by
-  the provider.)
+  running `effect` again, within the store's limits above.
+- Concurrent calls for the same key: one runs the effect; the rest wait and return
+  `duplicate`. (On Redis this holds while the holder's lease lasts: an effect that
+  outlives `pendingTtl` can run twice, flagged with `lostClaim`. Redis waiters give
+  up after `maxWaitMs`, default 5 s, and throw. If a holder crashed, its claim
+  blocks the key until `pendingTtl`, default 30 s, lapses, so redeliveries in that
+  window fail and are retried by the provider.)
 - If `effect` throws, nothing is stored and the error is re-thrown, so a later
   delivery can retry.
 
