@@ -79,6 +79,13 @@ follow [Semantic Versioning](https://semver.org/).
   ends; by the time it reads, the winner has finished. This is what limitation 7
   already said; the earlier text now agrees with it. No code change. Found by an
   adversarial review.
+- **Postgres: a connection whose `ROLLBACK` failed is destroyed, not reused.** The
+  store swallowed a failed `ROLLBACK` and called `release()` with no argument, so a
+  connection left in an unknown state went back into the pool for the next caller.
+  It now passes the error to `release(err)`, which tells `pg` to discard the
+  connection; after a clean rollback the connection is reused as before.
+  `PoolClient.release` accepts the optional error, as `pg`'s does. Found in an
+  external review.
 
 ## [0.9.0] - 2026-11-20
 
