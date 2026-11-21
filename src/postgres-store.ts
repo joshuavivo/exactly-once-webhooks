@@ -9,7 +9,8 @@ export interface Queryable {
 }
 
 export interface PoolClient extends Queryable {
-  release(): void;
+  /** pg's PoolClient: release(err) destroys the connection instead of reusing it. */
+  release(err?: Error | boolean): void;
 }
 
 export interface Pool {
@@ -74,6 +75,9 @@ export function createPostgresStore(pool: Pool, options: PostgresStoreOptions = 
     // raises a clear error instead of recursing/spinning without end.
     for (let attempt = 1; attempt <= MAX_CLAIM_ATTEMPTS; attempt++) {
       const client = await pool.connect();
+      // Set only when ROLLBACK itself fails: the connection is in an unknown state,
+      // so it is destroyed on release instead of going back to the pool.
+      let broken: Error | undefined;
       try {
         await client.query("BEGIN");
         // Bound the wait on another caller's claim (issue #11). SET LOCAL lasts
@@ -128,7 +132,9 @@ export function createPostgresStore(pool: Pool, options: PostgresStoreOptions = 
           try { options.onRetry({ key, attempt }); } catch { /* observability must not break the store */ }
         }
       } catch (err) {
-        await client.query("ROLLBACK").catch(() => {});
+        await client.query("ROLLBACK").catch((rollbackErr: unknown) => {
+          broken = rollbackErr instanceof Error ? rollbackErr : new Error(String(rollbackErr));
+        });
         if ((err as { code?: string }).code === "55P03") {
           throw new Error(
             `timed out after ${lockTimeoutMs}ms waiting for key ${JSON.stringify(key)} ` +
@@ -138,7 +144,7 @@ export function createPostgresStore(pool: Pool, options: PostgresStoreOptions = 
         }
         throw err;
       } finally {
-        client.release();
+        client.release(broken);
       }
     }
     throw new Error(

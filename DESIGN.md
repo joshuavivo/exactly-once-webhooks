@@ -217,8 +217,18 @@ These are the things a reviewer should know going in. None are hidden.
    Set `pendingTtl` above the longest effect, or use the Postgres store.
    Redis eviction policies (`allkeys-*`/`volatile-*`) can also drop a claim under
    memory pressure.
-5. **Stored results must be JSON-serialisable** (Postgres round-trips `result`
-   through JSON). Return plain data, not class instances or functions.
+5. **Stored results must be JSON-serialisable.** Every store keeps `result` as
+   JSON, so a duplicate gets the JSON copy (a `Date` becomes its ISO string,
+   `undefined` becomes `null`); the call that ran the effect gets its own value
+   back untouched. Return plain data, not class instances or functions. A function or
+   `Symbol` result is stored as `null`, as `JSON.stringify` drops it. A result
+   JSON can't hold at all (a `BigInt`, a cycle) makes the run throw after the effect: on
+   Postgres the whole transaction rolls back, the effect's writes included; in
+   memory the key is freed as for a failed effect; on Redis the effect has run
+   and its claim is left to expire, like a failed result write, so a redelivery
+   after `pendingTtl` runs it again (waiters may time out after `maxWaitMs` first).
+   The memory store throws for these too, so this shows up in tests rather than
+   first in production.
 6. **A slow effect holds a row lock and a pooled connection for its whole
    duration** in the Postgres store, because the effect runs inside the
    transaction. Keep effects short; do slow, non-transactional work after `run`
