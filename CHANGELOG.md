@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-21
+
 ### Added
 - **DESIGN: "Alternatives, and why this design doesn't use them".** Check-then-insert,
   a plain insert that catches the unique violation, advisory locks, `SERIALIZABLE`
