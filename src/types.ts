@@ -1,5 +1,6 @@
-// The one job of this library: run a side effect at most once per key, even when
-// the same event is delivered several times or two copies arrive at the same moment.
+// The one job of this library: run a side effect once per key, even when the same
+// event is delivered several times or two copies arrive at the same moment. How
+// strongly depends on the store (DESIGN.md, "The guarantee, stated precisely").
 //
 // A payment provider retries a webhook until it gets a 2xx, so the same "charge
 // succeeded" event can land two or three times. If each delivery credits the
@@ -48,14 +49,19 @@ export type Outcome<T> = {
  */
 export interface IdempotencyStore<Ctx = unknown> {
   /**
-   * Run `effect` at most once for `key`.
+   * Run `effect` once for `key`, as strongly as the store allows: fully on Postgres
+   * within the retention window, a lease on Redis (limitations 3 and 4), one process
+   * and `maxEntries` in memory. See DESIGN.md, "The guarantee, stated precisely".
    *
    * - The first call for a key runs `effect`, stores its result, and returns
    *   `{ status: "processed" }`.
    * - Any later call for the same key returns the stored result with
-   *   `{ status: "duplicate" }` and does NOT run `effect` again.
-   * - If several calls for the same key run concurrently, exactly one runs the
-   *   effect; the others wait for it and return `{ status: "duplicate" }`.
+   *   `{ status: "duplicate" }` and does NOT run `effect` again (within the
+   *   store's limits above).
+   * - If several calls for the same key run concurrently, one runs the effect;
+   *   the others wait for it and return `{ status: "duplicate" }`. (Redis: while
+   *   the holder's lease lasts; past it, two can run and the late one gets
+   *   `lostClaim: true`.)
    * - If `effect` throws, nothing is stored for the key and the error is
    *   re-thrown, so a later delivery can retry it.
    *

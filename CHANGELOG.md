@@ -6,6 +6,19 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **Docs: "exactly once" means the effect, not the delivery.** The README now says so
+  up front: delivery stays at-least-once, and what runs once is the handler's work,
+  as strongly as the store allows. DESIGN's statement of the guarantee is now scoped
+  per store (Postgres fully, for writes made through the transaction; Redis a lease;
+  memory one process), and no longer lists "calling the downstream API" as an effect
+  the library makes happen once: an outside call isn't rolled back, which is what the
+  outbox paragraph under "Alternatives" covers. The API docs (README and the
+  `IdempotencyStore` comments in `types.ts`) no longer say "at most once" without
+  the store's limits, and the concurrent-call line now notes the Redis lease.
+- **Docs: the benchmark notes no longer point at #11 as open.** The Postgres waiter
+  cost now says the wait has been bounded by `lockTimeoutMs` since 0.9.
+
 ## [0.10.0] - 2026-11-21
 
 ### Added
