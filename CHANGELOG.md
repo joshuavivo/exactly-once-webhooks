@@ -10,6 +10,8 @@ follow [Semantic Versioning](https://semver.org/).
 - **Package metadata:** `package.json` now names the repository, homepage, issue
   tracker and author, so an installed copy (`node_modules/exactly-once-webhooks/package.json`)
   and npm tooling link back to this repo.
+- **README badges:** live test status for `main`, the latest release, the Node
+  floor and the license, at the top of the README.
 - **Docs: "exactly once" means the effect, not the delivery.** The README now says so
   up front: delivery stays at-least-once, and what runs once is the handler's work,
   as strongly as the store allows. DESIGN's statement of the guarantee is now scoped
