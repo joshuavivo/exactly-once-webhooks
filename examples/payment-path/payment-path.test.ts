@@ -184,7 +184,7 @@ test("dead letter: replaying a malformed letter is refused and keeps the letter"
   assert.equal(h.deadLetters().length, 1, "the letter stays for a person to fix");
 });
 
-// --- 5. found by an adversarial review --------------------------------------
+// --- 5. found by an adversarial AI review -----------------------------------
 
 const refundOf = (id: string, charge: string, cents: number) => ({
   id, type: "charge.refunded", data: { charge, account: "acct_1", amount_cents: cents },

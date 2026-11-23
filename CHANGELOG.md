@@ -42,7 +42,7 @@ follow [Semantic Versioning](https://semver.org/).
   next delivery runs it again); DESIGN limitation 4. Before, the CAS outcome was
   ignored and the call looked like a normal first run. `Outcome<T>` gains the
   optional `lostClaim?: true`; the Postgres and memory stores never set it. Found in
-  an external review.
+  an AI review.
 
 ### Changed
 - **Postgres: the claim's `lock_timeout` is now a bound parameter**
@@ -50,13 +50,13 @@ follow [Semantic Versioning](https://semver.org/).
   `SET LOCAL`) instead of a number spliced into the SQL. It was safe before
   (`lockTimeoutMs` is validated as a non-negative integer), but it was the one
   statement in the store built by string interpolation. Same behaviour; the
-  `lockTimeoutMs` test now also checks the bound value. Found in an external review.
+  `lockTimeoutMs` test now also checks the bound value. Found in an AI review.
 - **Memory store: completing a key no longer scans the whole map.** With
   `maxEntries` set, every completion used to count all done entries before
   evicting; it now keeps a running count, so the bookkeeping is O(1) and eviction
   only walks past keys still in flight. Which key is evicted is unchanged, and a new
   test pins that order across a failed effect and re-delivered keys. Locally, 40k
-  completions with a 20k cap went from ~1.0 s to ~0.08 s. Found in an external
+  completions with a 20k cap went from ~1.0 s to ~0.08 s. Found in an AI
   review.
 - **Every store returns the same JSON copy for a duplicate.** The memory store
   used to hand a duplicate the first run's live object, while Postgres and Redis
@@ -68,7 +68,7 @@ follow [Semantic Versioning](https://semver.org/).
   every store, as it already did from Postgres; before, the memory store returned
   the live value and Redis returned `undefined`. A new contract test pins this for
   every store; DESIGN limitation 5 says what each store does. The call that ran
-  the effect still gets its own value back. Found in an external review.
+  the effect still gets its own value back. Found in an AI review.
 
 ### Fixed
 - **Redis: `pollIntervalMs` and `maxWaitMs` are validated when the store is
@@ -77,35 +77,35 @@ follow [Semantic Versioning](https://semver.org/).
   the first look, and a negative or NaN `pollIntervalMs` was silently treated as
   ~1 ms. Now `pollIntervalMs` must be finite and non-negative, and `maxWaitMs`
   non-negative (0 and `Infinity` still allowed), or `createRedisStore` throws with
-  the bad value in the message. Found in an external review.
+  the bad value in the message. Found in an AI review.
 - **Docs: what the effect's `lock_timeout` actually is.** The code comment said the
   effect gets "the session default"; `SET LOCAL lock_timeout TO DEFAULT` actually
   restores the server or role default, so a `lock_timeout` the app `SET` on the
   connection does not apply inside the effect (checked on Postgres 16: session
   `5s` reads `0` inside the effect, `5s` again after commit). Behaviour unchanged
   since 0.9.0; the comment is corrected and DESIGN limitation 6 says how to bound
-  the effect's own lock waits. Found by an adversarial review of this release.
+  the effect's own lock waits. Found by an adversarial AI review of this release.
 - **Example: replaying a dead letter that was parked as malformed is refused
   cleanly.** `replay()` cast the parse result to an event without checking it, so
   replaying a malformed letter threw a bare `TypeError` (`Cannot read properties of
   undefined`) from inside the ledger write. Nothing was written and the letter was
   kept, but the person replaying it got a crash, not a reason. It now returns
   `400 still malformed: <reason>`, never runs the write, and keeps the letter. Found
-  in an external review.
+  in an AI review.
 - **Docs: where a losing caller waits on Postgres.** The README, DESIGN.md, the
   schema.sql header and four code comments said the loser waits in
   `SELECT ... FOR UPDATE`. It actually waits in its own
   `INSERT ... ON CONFLICT DO NOTHING`, which blocks until the winner's transaction
   ends; by the time it reads, the winner has finished. This is what limitation 7
   already said; the earlier text now agrees with it. No code change. Found by an
-  adversarial review.
+  adversarial AI review.
 - **Postgres: a connection whose `ROLLBACK` failed is destroyed, not reused.** The
   store swallowed a failed `ROLLBACK` and called `release()` with no argument, so a
   connection left in an unknown state went back into the pool for the next caller.
   It now passes the error to `release(err)`, which tells `pg` to discard the
   connection; after a clean rollback the connection is reused as before.
   `PoolClient.release` accepts the optional error, as `pg`'s does. Found in an
-  external review.
+  AI review.
 
 ## [0.9.0] - 2026-11-20
 
@@ -204,7 +204,7 @@ follow [Semantic Versioning](https://semver.org/).
   the claim.
 
 ### Fixed
-- Corrected stale/false docs a review caught: `package.json`, `types.ts`, `DESIGN`
+- Corrected stale/false docs an AI review caught: `package.json`, `types.ts`, `DESIGN`
   and `README` said "two stores" / "In-memory and Postgres" (there are three);
   `README` pointed the race test at `memory-store.test.ts` (it is the shared
   `contract.ts`); the "tested against real servers via `REDIS_URL`" claim is now
@@ -222,7 +222,7 @@ follow [Semantic Versioning](https://semver.org/).
   concurrent-duplicate bug this library exists to stop. Measured: four deliveries
   with the first failing ran the effect four times. The re-check is now a loop:
   exactly one waiter re-claims and the rest wait on it. (Found by an adversarial
-  code review; the Postgres and Redis stores were never affected — their claim is
+  AI code review; the Postgres and Redis stores were never affected — their claim is
   atomic in the database / via `SET NX`.)
 - The contract's failure-race test was too weak to catch the above (two callers, a
   `>= 1` assertion). It now runs four concurrent callers and asserts the effect
@@ -238,7 +238,7 @@ follow [Semantic Versioning](https://semver.org/).
   `MAX_CLAIM_ATTEMPTS` (50) and raise a clear error if a holder keeps rolling back
   (a deterministically failing effect), instead of recursing/spinning forever. No
   change under healthy contention, where one delivery wins immediately. Each store
-  has a test proving the bound fires. (Raised by an external code review.)
+  has a test proving the bound fires. (Raised by an AI code review.)
 - Corrected a misleading comment in the Postgres store: a committed row is always
   `done` (the `pending` state only exists inside the holder's uncommitted
   transaction), so an absent row means the holder rolled back.
