@@ -1,5 +1,10 @@
 # exactly-once-webhooks
 
+[![tests](https://github.com/joshuavivo/exactly-once-webhooks/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/joshuavivo/exactly-once-webhooks/actions/workflows/tests.yml)
+[![release](https://img.shields.io/github/v/release/joshuavivo/exactly-once-webhooks)](https://github.com/joshuavivo/exactly-once-webhooks/releases)
+[![node](https://img.shields.io/badge/node-%E2%89%A522.18-informational)](package.json)
+[![license: MIT](https://img.shields.io/badge/license-MIT-informational)](LICENSE)
+
 Process a payment webhook **once**, even when the provider delivers it twice or
 two copies arrive at the same moment.
 
