@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Release workflow publishes to npm.** After the GitHub Release, the `release`
+  workflow runs `npm publish --provenance`, so a published version records the commit
+  and workflow run it was built from (#29). The README keeps the release-tarball
+  install line until a version is on the registry.
+
 ### Changed
 - **Docs: a worked outbox example.** The README and `DESIGN.md` tell callers to use an
   outbox for calls to outside APIs. Both now link to

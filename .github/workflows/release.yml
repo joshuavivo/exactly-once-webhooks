@@ -2,7 +2,9 @@ name: release
 # Push a tag like v0.7.0 and this runs the full test gate (the same workflow as
 # every PR, real Postgres and Redis included), checks the tag matches
 # package.json, then publishes a GitHub Release whose notes are that version's
-# section of CHANGELOG.md, with the npm package tarball attached.
+# section of CHANGELOG.md, with the npm package tarball attached. After that it
+# publishes the same version to the npm registry with a provenance statement,
+# which records the commit and workflow run the package was built from.
 on:
   push:
     tags: ["v*.*.*"]
@@ -51,3 +53,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag ./*.tgz
+
+  npm:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm signs the provenance statement with this run's identity
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npm run build
+      - name: Publish to npm with provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public
