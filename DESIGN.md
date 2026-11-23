@@ -158,6 +158,13 @@ library makes the row happen once. The provider's idempotency key makes the
 call's effect happen once, within the provider's key-retention window; the call
 itself may repeat.
 
+A worked example of the row half of this, tested against a real Postgres, is
+[webhook-crm-alert's Postgres path](https://github.com/joshuavivo/webhook-crm-alert#the-postgres-path): the event row and one outbox row per
+outside call commit inside the effect's transaction, and a sender works through the
+outbox afterwards (the sample provides the function that sends leftover rows but
+does not schedule it). Its calls are at-least-once (a CRM upsert keyed on email, and a chat
+post that can repeat); it does not use a provider idempotency key.
+
 ## Handler-failure semantics
 
 If the effect throws, **nothing is persisted for the key** and the error is

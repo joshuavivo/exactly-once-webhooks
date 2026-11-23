@@ -7,6 +7,11 @@ follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- **Docs: a worked outbox example.** The README and `DESIGN.md` tell callers to use an
+  outbox for calls to outside APIs. Both now link to
+  [webhook-crm-alert's Postgres path](https://github.com/joshuavivo/webhook-crm-alert#the-postgres-path), which uses this library's Postgres store for
+  the claim and an outbox for its CRM and chat calls, with its own tests against a real
+  Postgres. No code change.
 - **Package metadata:** `package.json` now names the repository, homepage, issue
   tracker and author, so an installed copy (`node_modules/exactly-once-webhooks/package.json`)
   and npm tooling link back to this repo.

@@ -24,6 +24,8 @@ that. What this makes happen once is your handler's work, as strongly as the sto
 allows: on Postgres, the database writes your effect makes through the transaction
 commit together with the "done" record. A call to an outside API from inside the
 effect is not covered, because it can't be rolled back; use an outbox for those.
+[webhook-crm-alert](https://github.com/joshuavivo/webhook-crm-alert#the-postgres-path) is a worked example: this library's Postgres store for
+the claim, and an outbox for the outside calls.
 [DESIGN.md](DESIGN.md#the-guarantee-stated-precisely) states the guarantee
 precisely, store by store.
 
