@@ -48,6 +48,8 @@ be merged — that contract is the whole point.
 3. The `release` workflow reruns the full test gate, refuses a tag that doesn't
    match `package.json`, and publishes a GitHub Release with that changelog section
    as the notes and the `npm pack` tarball attached.
+4. The same workflow then runs `npm publish --provenance`. It needs the `NPM_TOKEN`
+   repository secret, which only the maintainer can set.
 
 ## Reporting a problem
 

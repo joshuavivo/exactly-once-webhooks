@@ -6,6 +6,18 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-11-23
+
+No change to what the library does since 0.10.0: in `src/` only comments changed
+(the doc comments in `types.ts`). This is the first version built to be published to
+the npm registry.
+
+### Added
+- **Release workflow publishes to npm.** After the GitHub Release, the `release`
+  workflow runs `npm publish --provenance`, so a published version records the commit
+  and workflow run it was built from (#29). The README keeps the release-tarball
+  install line until a version is on the registry.
+
 ### Changed
 - **Docs: a worked outbox example.** The README and `DESIGN.md` tell callers to use an
   outbox for calls to outside APIs. Both now link to
