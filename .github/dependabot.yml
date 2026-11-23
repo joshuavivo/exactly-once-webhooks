@@ -7,8 +7,11 @@ updates:
     schedule:
       interval: weekly
     groups:
+      # Minor and patch bumps arrive together in one PR. A major bump is left out of
+      # the group, so each one gets its own PR and is taken on its own (#30, #31).
       dev-dependencies:
         dependency-type: development
+        update-types: ["minor", "patch"]
     ignore:
       # @types/node tracks the Node major we support (engines: >=22.18). Newer
       # majors' types would let code typecheck against APIs Node 22 lacks.
