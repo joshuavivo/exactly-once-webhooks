@@ -6,6 +6,14 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **`fromNodeRedis` now typechecks with node-redis 4.** The README's own example,
+  `createRedisStore(fromNodeRedis(createClient()))`, failed to compile against node-redis 4
+  (TS2345 on `set`): the adapter declared `NX?: boolean`, and node-redis 4's `SetOptions`
+  only accepts `NX: true`. It now declares exactly the options it passes
+  (`{ NX: true; PX: number }`). Runtime behaviour is unchanged; the real-Redis contract
+  already passed on 4.
+
 ### Changed
 - **README: install from npm.** 0.10.1 is on the registry, published by the release
   workflow with provenance, so the install line is now `npm install exactly-once-webhooks`

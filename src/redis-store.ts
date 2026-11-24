@@ -199,7 +199,7 @@ export const DEL_IF_VALUE_LUA =
  * For ioredis, use `fromIoRedis`.
  */
 export function fromNodeRedis(client: {
-  set(key: string, value: string, opts: { NX?: boolean; PX?: number }): Promise<string | null>;
+  set(key: string, value: string, opts: { NX: true; PX: number }): Promise<string | null>;
   get(key: string): Promise<string | null>;
   eval(script: string, opts: { keys: string[]; arguments: string[] }): Promise<unknown>;
 }): RedisLike {
