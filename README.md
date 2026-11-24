@@ -2,6 +2,7 @@
 
 [![tests](https://github.com/joshuavivo/exactly-once-webhooks/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/joshuavivo/exactly-once-webhooks/actions/workflows/tests.yml)
 [![release](https://img.shields.io/github/v/release/joshuavivo/exactly-once-webhooks)](https://github.com/joshuavivo/exactly-once-webhooks/releases)
+[![npm](https://img.shields.io/npm/v/exactly-once-webhooks)](https://www.npmjs.com/package/exactly-once-webhooks)
 [![node](https://img.shields.io/badge/node-%E2%89%A522.18-informational)](package.json)
 [![license: MIT](https://img.shields.io/badge/license-MIT-informational)](LICENSE)
 
@@ -29,12 +30,14 @@ the claim, and an outbox for the outside calls.
 [DESIGN.md](DESIGN.md#the-guarantee-stated-precisely) states the guarantee
 precisely, store by store.
 
-Not on the npm registry yet. Install the packed release from GitHub (CI installs
-this exact tarball into a fresh project and imports it on every change):
+```
+npm install exactly-once-webhooks
+```
 
-```
-npm install https://github.com/joshuavivo/exactly-once-webhooks/releases/download/v0.10.0/exactly-once-webhooks-0.10.0.tgz
-```
+Published from the release workflow with
+[provenance](https://www.npmjs.com/package/exactly-once-webhooks): the registry records
+the commit and workflow run each release was built from. CI also packs the package,
+installs that tarball into a fresh project and imports it, on every change.
 
 No runtime dependencies. Node 22.18+ (it ships as TypeScript and compiled JS).
 

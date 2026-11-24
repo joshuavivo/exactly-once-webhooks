@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **README: install from npm.** 0.10.1 is on the registry, published by the release
+  workflow with provenance, so the install line is now `npm install exactly-once-webhooks`
+  and the README has an npm version badge. The GitHub Release still carries the same
+  tarball.
+
 ## [0.10.1] - 2026-11-23
 
 No change to what the library does since 0.10.0: in `src/` only comments changed
