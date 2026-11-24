@@ -19,6 +19,9 @@ the npm registry.
   install line until a version is on the registry.
 
 ### Changed
+- **`package.json` description no longer says "exactly once" without its limits.** It
+  is the first line of the package's registry page, and it now matches the repository
+  description: once on Postgres, a lease on Redis.
 - **Docs: a worked outbox example.** The README and `DESIGN.md` tell callers to use an
   outbox for calls to outside APIs. Both now link to
   [webhook-crm-alert's Postgres path](https://github.com/joshuavivo/webhook-crm-alert#the-postgres-path), which uses this library's Postgres store for
