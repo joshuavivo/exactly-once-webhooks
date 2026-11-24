@@ -19,6 +19,9 @@ the npm registry.
   install line until a version is on the registry.
 
 ### Changed
+- **README: the `onRetry` paragraph has its own heading.** It sat under
+  `createPostgresStore` although it is mostly about the Redis store. Same text, moved
+  below the Redis section.
 - **`package.json` description no longer says "exactly once" without its limits.** It
   is the first line of the package's registry page, and it now matches the repository
   description: once on Postgres, a lease on Redis.

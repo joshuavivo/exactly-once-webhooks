@@ -167,13 +167,6 @@ on a schedule — it deletes processed keys older than a window you choose (set 
 past your provider's retry window). The Redis store needs no pruning; its TTL
 expires keys on its own.
 
-The Redis store takes an optional `onRetry({ key, attempt })` hook, called when a
-waiter has to retry because the holder failed. Point it at a log line or a counter
-to see contention, and a key whose effect fails every time, before it reaches the
-retry cap. The Postgres store accepts the same hook, but it rarely fires there: a
-waiter's `INSERT` blocks on the holder's uncommitted row and takes the claim
-directly when the holder rolls back, so a rollback is not a retry.
-
 ### `createRedisStore(redis, options?)`
 
 A store backed by Redis and safe across processes. The claim is an atomic
@@ -203,6 +196,15 @@ store is **not** transactional with your effect — the effect runs, then the re
 is written. Use it when the effect is itself idempotent, or when the dedup window is
 the whole requirement; use Postgres when your write must be atomic with the
 "handled" record. [`DESIGN.md`](DESIGN.md) spells out the trade-offs.
+
+### `onRetry` (Redis and Postgres stores)
+
+The Redis store takes an optional `onRetry({ key, attempt })` hook, called when a
+waiter has to retry because the holder failed. Point it at a log line or a counter
+to see contention, and a key whose effect fails every time, before it reaches the
+retry cap. The Postgres store accepts the same hook, but it rarely fires there: a
+waiter's `INSERT` blocks on the holder's uncommitted row and takes the claim
+directly when the holder rolls back, so a rollback is not a retry.
 
 ## Measured, not claimed
 
