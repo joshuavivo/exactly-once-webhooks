@@ -7,7 +7,7 @@ import type { IdempotencyStore, Outcome, RetryInfo } from "./types.ts";
 //
 // The library does not depend on a Redis client. It asks only for the four
 // operations it uses, so it works with node-redis, ioredis, or any wrapper. A
-// ready-made adapter for node-redis v4+ is exported as `fromNodeRedis`.
+// ready-made adapter for node-redis 4, 5 and 6 is exported as `fromNodeRedis`.
 //
 // Every claim carries a random ownership token. The holder only finalizes or
 // releases the key if it still holds THAT token, so a holder whose claim expired
@@ -190,7 +190,7 @@ export const DEL_IF_VALUE_LUA =
   "return redis.call('DEL', KEYS[1]) else return 0 end";
 
 /**
- * Adapt a node-redis v4+ client to the small `RedisLike` shape this store needs.
+ * Adapt a node-redis client (4, 5 or 6) to the small `RedisLike` shape this store needs.
  *
  *   import { createClient } from "redis";
  *   const client = createClient(); await client.connect();

@@ -52,6 +52,38 @@ jobs:
       # REDIS_URL are set — against the real Postgres and Redis services too.
       - run: npm test
 
+  # fromNodeRedis must work with every node-redis major the README names. Each leg
+  # installs one major, typechecks the README example (test/node-redis-types.ts)
+  # and runs the Redis contract against a real Redis. The test job above uses the
+  # dev dependency's major (6).
+  redis-compat:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-redis: [4, 5, 6]
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm install --no-save redis@${{ matrix.node-redis }}
+      - run: node -p "'node-redis ' + require('redis/package.json').version"
+      - run: npm run typecheck
+      - run: node --test test/redis-store.test.ts
+
   # The release workflow publishes what `npm pack` produces. Prove that artifact
   # installs into a fresh project and works, on every change.
   package:

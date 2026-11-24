@@ -14,6 +14,13 @@ follow [Semantic Versioning](https://semver.org/).
   (`{ NX: true; PX: number }`). Runtime behaviour is unchanged; the real-Redis contract
   already passed on 4.
 
+### Added
+- **node-redis 4, 5 and 6 checked in CI.** A `redis-compat` job installs each major,
+  typechecks a compile-only copy of the README example (`test/node-redis-types.ts`) and
+  runs the real-Redis contract, including the concurrent double-credit race. The dev
+  dependency moves to node-redis 6 (#30), and the README says which majors are tested
+  instead of "v4+".
+
 ### Changed
 - **README: install from npm.** 0.10.1 is on the registry, published by the release
   workflow with provenance, so the install line is now `npm install exactly-once-webhooks`
