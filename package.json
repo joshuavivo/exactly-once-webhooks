@@ -1,7 +1,7 @@
 {
   "name": "exactly-once-webhooks",
   "version": "0.10.1",
-  "description": "Process payment webhooks exactly once, even when they are delivered twice or arrive at the same moment. In-memory, Postgres and Redis stores.",
+  "description": "Process a payment webhook once, even when copies race. On Postgres the write and its \"done\" record commit in one transaction; on Redis it is a lease that flags overruns. TypeScript, no runtime deps.",
   "homepage": "https://github.com/joshuavivo/exactly-once-webhooks#readme",
   "repository": {
     "type": "git",

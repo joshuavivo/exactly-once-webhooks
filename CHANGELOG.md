@@ -19,6 +19,12 @@ the npm registry.
   install line until a version is on the registry.
 
 ### Changed
+- **README: the `onRetry` paragraph has its own heading.** It sat under
+  `createPostgresStore` although it is mostly about the Redis store. Same text, moved
+  below the Redis section.
+- **`package.json` description no longer says "exactly once" without its limits.** It
+  is the first line of the package's registry page, and it now matches the repository
+  description: once on Postgres, a lease on Redis.
 - **Docs: a worked outbox example.** The README and `DESIGN.md` tell callers to use an
   outbox for calls to outside APIs. Both now link to
   [webhook-crm-alert's Postgres path](https://github.com/joshuavivo/webhook-crm-alert#the-postgres-path), which uses this library's Postgres store for
@@ -184,7 +190,7 @@ the npm registry.
   a second line behind table grants. DESIGN's testing section now says Redis also
   runs the contract against a real server.
 
-## [0.7.0]
+## [0.7.0] - 2026-11-20
 
 ### Changed (breaking for custom `RedisLike` adapters)
 - **Redis claims carry an ownership token** (closes #10). The pending value now
@@ -201,7 +207,7 @@ the npm registry.
   a holder that no longer owns the claim. Two tests force the expiry and fail
   without the token.
 
-## [0.6.0]
+## [0.6.0] - 2026-11-19
 
 ### Added
 - **Real-server test coverage.** The shared contract now runs against a live
@@ -230,7 +236,7 @@ the npm registry.
 - The failure-race contract test now also asserts the effect *ran* exactly twice
   (not only that it succeeded once).
 
-## [0.5.1]
+## [0.5.1] - 2026-11-19
 
 ### Fixed
 - **Concurrent double-run in the memory store.** When a holder's effect threw while
@@ -246,7 +252,7 @@ the npm registry.
   reruns *exactly once* with exactly one `processed` result. It fails on the old
   memory store and passes on the fix.
 
-## [0.5.0]
+## [0.5.0] - 2026-11-19
 
 ### Changed
 - **Claim retries are now a bounded loop, not unbounded recursion.** When a holder's
@@ -264,7 +270,7 @@ the npm registry.
 - `DESIGN.md` limitations renumbered (dropped the stray `2a`); the retry limitation
   now describes the bounded loop instead of unbounded recursion.
 
-## [0.4.0]
+## [0.4.0] - 2026-11-19
 
 ### Added
 - `pruneExpiredKeys(pool, { olderThanSeconds, table? })` — the retention job the
@@ -274,7 +280,7 @@ the npm registry.
 - `SECURITY.md` (private disclosure), a `Makefile` (`make check`, `make db-test`),
   and a Mermaid flow diagram in `DESIGN.md`.
 
-## [0.3.0]
+## [0.3.0] - 2026-11-19
 
 ### Added
 - **Redis store** — `createRedisStore(redis, options?)`, a third implementation
@@ -287,7 +293,7 @@ the npm registry.
 - `test/fake-redis.ts`, an in-process stand-in modelling `SET NX PX` + TTL, so the
   Redis contract runs with no services.
 
-## [0.2.0]
+## [0.2.0] - 2026-11-19
 
 ### Added
 - **Shared behavioural contract** (`test/contract.ts`) that every store
@@ -312,7 +318,7 @@ the npm registry.
 - `types.ts` now points at the real `test/contract.ts` (previously referenced a
   file that did not exist).
 
-## [0.1.0] — 2026-11-18
+## [0.1.0] - 2026-11-18
 
 ### Added
 - Initial release: `createMemoryStore` and `createPostgresStore`, the
