@@ -52,8 +52,8 @@ jobs:
       # REDIS_URL are set — against the real Postgres and Redis services too.
       - run: npm test
 
-  # The README tells people to install the packed tarball. Prove that exact
-  # artifact installs into a fresh project and works, on every change.
+  # The release workflow publishes what `npm pack` produces. Prove that artifact
+  # installs into a fresh project and works, on every change.
   package:
     runs-on: ubuntu-latest
     steps:
