@@ -1,5 +1,5 @@
 # Thin wrappers over the npm scripts, so `make test` / `make check` just work.
-.PHONY: install test typecheck build check up down db-test example
+.PHONY: install test typecheck build check up down db-test example mutation
 
 install:        ## install dev dependencies
 	npm install
@@ -26,3 +26,7 @@ example:        ## the end-to-end payment path demo (no services)
 
 db-test: up     ## run the full suite against real Postgres + Redis
 	DATABASE_URL=postgres://eow:eow@localhost:5433/eow REDIS_URL=redis://localhost:6380 npm test
+
+mutation: up    ## mutation-test src/ against real Postgres + Redis (about 30 minutes, see DESIGN.md)
+	npm install --no-save @stryker-mutator/core@10.1.1
+	DATABASE_URL=postgres://eow:eow@localhost:5433/eow REDIS_URL=redis://localhost:6380 npx stryker run

@@ -1,0 +1,22 @@
+{
+  "mutate": [
+    "src/**/*.ts"
+  ],
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "env EOW_PROPERTY_NO_SHRINK=1 node --test"
+  },
+  "coverageAnalysis": "off",
+  "reporters": [
+    "clear-text",
+    "json",
+    "progress"
+  ],
+  "jsonReporter": {
+    "fileName": "reports/mutation/mutation.json"
+  },
+  "tempDirName": ".stryker-tmp",
+  "timeoutMS": 8000,
+  "timeoutFactor": 1.5,
+  "concurrency": 1
+}

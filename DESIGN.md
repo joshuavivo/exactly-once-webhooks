@@ -306,3 +306,55 @@ These need a real Postgres, so they skip without `DATABASE_URL`. They do not cov
 a database failover or a network partition between the handler and Postgres, and
 there is no crash test for the Redis store: what it does after a crash is
 limitation 3, and it is not the same guarantee.
+
+### Do the tests catch a broken store?
+
+Mutation testing answers that: [Stryker](https://stryker-mutator.io/) makes one
+small change to `src/` at a time (flips a comparison, empties a block, removes a
+call) and runs the whole suite against real Postgres and Redis. A change no test
+notices is a "survivor". `make mutation` runs it; it takes about 30 minutes.
+
+Measured on 2026-11-25 at commit `aadb2a6`, Node 26, Postgres 16, on servers
+emptied before the run, 303 mutants:
+
+| Result | Count | Meaning |
+|---|---:|---|
+| Killed | 225 | a test failed |
+| Timed out | 67 | the suite hung until the tool stopped it |
+| Survived | 11 | every test still passed |
+
+Stryker's headline score counts a timeout as detected, which gives 96%. Counting
+only failed assertions it is 74%. Both are true; the table is the honest form.
+
+The first run, before the tests it prompted, had 23 survivors. Twelve of those no
+longer survive, and they came from ten gaps that now each have a test: eviction
+dropping an in-flight key, eviction by arrival order instead of completion
+order, the Postgres claim cap being 49 instead of 50, its emptied give-up
+message, `pruneExpiredKeys` rejecting a window of 0 and not releasing its
+connection (two mutants), the node-redis adapter reporting a result write as
+applied when the claim had expired, the default Redis key prefix (two mutants),
+and the Redis claim cap and its give-up message.
+
+One of those is worth telling. In the second run the key-prefix change looked
+caught, and it was not: the real-Redis tests failed only because an earlier
+run of the same change had left keys without the run's prefix on the server.
+Rerunning that one change on an
+empty server showed it surviving, so it got a test of its own that looks at the
+stored key.
+
+The 11 that remain, by kind:
+
+- **Message text** (1): emptying the second half of the lock-timeout error. No
+  test pins that wording.
+- **No observable difference** (9): calling an absent `onRetry` inside a block
+  that already ignores its errors (2); the placeholder status string in a
+  pending entry, which nothing reads (2); the adapters' return value from the
+  release-on-failure delete, which the store ignores (4); and treating any
+  committed row as done, when the store only ever commits done rows (1).
+- **Real, untested** (1): `>` versus `>=` on the Redis wait deadline.
+
+Two things about the tool itself. It is not a dev dependency: it pulls in
+packages with open advisories, and `npm audit` on this repository reports none, so
+`make mutation` installs it without saving it. And it is configured for one
+worker: with 4 and 6 workers on a shared database the runs stalled, with one they
+did not. The cause was not pinned down.
