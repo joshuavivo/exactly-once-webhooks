@@ -6,6 +6,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **The shared contract has a generated test.** 100 random schedules per store (a few
+  keys, up to eight duplicate and concurrent deliveries, planned effect failures), each
+  checked against the outcome computed from the schedule. Runs for the memory store, the
+  Redis store (fake and real) and the Postgres store. `fast-check` is a new dev
+  dependency; nothing is added at runtime. DESIGN.md, Testing.
+
 ### Changed
 - **README: install from npm.** 0.10.1 is on the registry, published by the release
   workflow with provenance, so the install line is now `npm install exactly-once-webhooks`

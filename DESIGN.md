@@ -277,3 +277,16 @@ the *same* contract against real servers when `DATABASE_URL` / `REDIS_URL` are s
 (CI sets both via service containers), with per-run key salting so durable data
 does not collide across runs. "Any store that honours the contract is valid" is therefore executable, not
 a slogan.
+
+The contract's last test is generated rather than hand-written. Using
+[fast-check](https://fast-check.dev/) (a dev dependency; the library still has no
+runtime dependencies), it builds 100 schedules per store: up to three keys, up to
+eight deliveries with random start times and effect durations, and a plan for how
+many attempts of each key's effect throw before one succeeds. The expected result
+is computed from the plan alone (how many callers are rejected, whether the effect
+succeeds, what every other caller is told) and compared with what the store did,
+along with a check that no two effects for one key were ever in flight together.
+A failure prints the seed and the smallest failing schedule;
+`EOW_PROPERTY_SEED=<seed> npm test` replays it. It covers interleavings nobody
+thought to write down. It does not cover crashes or expiry: a schedule runs inside
+one process with effects far shorter than any timeout.
