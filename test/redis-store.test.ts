@@ -223,11 +223,15 @@ const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 test("a holder whose claim expired does not overwrite the new holder's result", async () => {
   const redis = createFakeRedis();
+  // Two stores on one Redis: only the holder meant to lapse gets the 20ms claim.
+  // The later callers' claims last 5s, so a slow CI runner can't make them lapse
+  // too (that made the sibling test below flaky).
   const store = createRedisStore(redis, { pendingTtlSeconds: 0.02, pollIntervalMs: 1 });
+  const steady = createRedisStore(redis, { pendingTtlSeconds: 5, pollIntervalMs: 1 });
 
   const slow = store.run("evt", async () => { await pause(60); return "late"; });
   await pause(35); // the slow holder's 20ms claim has lapsed
-  const second = await store.run("evt", async () => "on-time");
+  const second = await steady.run("evt", async () => "on-time");
   assert.deepEqual(second, { status: "processed", result: "on-time" });
 
   const late = await slow;
@@ -236,7 +240,7 @@ test("a holder whose claim expired does not overwrite the new holder's result", 
   assert.deepEqual(late, { status: "processed", result: "late", lostClaim: true });
 
   // The record that stands is the new holder's, not the late writer's.
-  const third = await store.run("evt", async () => "never");
+  const third = await steady.run("evt", async () => "never");
   assert.deepEqual(third, { status: "duplicate", result: "on-time" });
 });
 
@@ -257,7 +261,11 @@ test("a holder whose claim expired with no one taking over is flagged, and the k
 
 test("a holder whose claim expired does not delete the new holder's claim when it fails", async () => {
   const redis = createFakeRedis();
+  // Only the failing holder gets the 20ms claim. With one store, the second
+  // holder's claim also lived 20ms and had about 5ms to spare before release(),
+  // so a runner that fell that far behind failed the test (lostClaim: true on CI).
   const store = createRedisStore(redis, { pendingTtlSeconds: 0.02, pollIntervalMs: 1 });
+  const steady = createRedisStore(redis, { pendingTtlSeconds: 5, pollIntervalMs: 1 });
   let runs = 0;
 
   const slowFail = store.run("evt", async () => { await pause(40); throw new Error("late failure"); });
@@ -266,13 +274,13 @@ test("a holder whose claim expired does not delete the new holder's claim when i
   // The second caller claims and is mid-effect when the first one fails.
   let release!: () => void;
   const gate = new Promise<void>((r) => { release = r; });
-  const second = store.run("evt", async () => { runs += 1; await gate; return "second"; });
+  const second = steady.run("evt", async () => { runs += 1; await gate; return "second"; });
   await assert.rejects(slowFail, /late failure/);
 
   // Without the token, the failed holder's DEL would have freed the key here and
   // this third caller would run the effect a second time.
   assert.equal(redis._size(), 1, "the second holder's claim survived the late failure");
-  const third = store.run("evt", async () => { runs += 1; return "third"; });
+  const third = steady.run("evt", async () => { runs += 1; return "third"; });
   await pause(5);
   release();
 

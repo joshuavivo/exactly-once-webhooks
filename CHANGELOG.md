@@ -22,6 +22,11 @@ follow [Semantic Versioning](https://semver.org/).
   below was merged; rerun on the merged code before release). The runs found ten gaps in
   the tests (eviction of an in-flight key in the memory store among them); each now
   has a test. Stryker is installed for the run only, not added to `package.json`.
+- **node-redis 4, 5 and 6 checked in CI.** A `redis-compat` job installs each major,
+  typechecks a compile-only copy of the README example (`test/node-redis-types.ts`) and
+  runs the real-Redis contract, including the concurrent double-credit race. The dev
+  dependency moves to node-redis 6 (#30), and the README says which majors are tested
+  instead of "v4+".
 
 ### Changed
 - **README: the benchmark note no longer calls the p99 an "upper bound".** One run on
@@ -37,8 +42,18 @@ follow [Semantic Versioning](https://semver.org/).
   workflow with provenance, so the install line is now `npm install exactly-once-webhooks`
   and the README has an npm version badge. The GitHub Release still carries the same
   tarball.
+- **Built with TypeScript 7** (was 5.9.3), the native compiler, taken on its own (#31).
+  Nothing a consumer sees changes: the published `dist/` (`.js` and `.d.ts`) built by
+  7.0.2 is byte-identical to what 5.9.3 built from the same source. TypeScript is a dev
+  dependency only, so installs are unaffected.
 
 ### Fixed
+- **`fromNodeRedis` now typechecks with node-redis 4.** The README's own example,
+  `createRedisStore(fromNodeRedis(createClient()))`, failed to compile against node-redis 4
+  (TS2345 on `set`): the adapter declared `NX?: boolean`, and node-redis 4's `SetOptions`
+  only accepts `NX: true`. It now declares exactly the options it passes
+  (`{ NX: true; PX: number }`). Runtime behaviour is unchanged; the real-Redis contract
+  already passed on 4.
 - **Postgres store: concurrent duplicates at `REPEATABLE READ` or `SERIALIZABLE` now
   return `duplicate`.** On a connection whose default isolation is stricter than
   `READ COMMITTED`, a delivery waiting on another delivery's claim got Postgres error
