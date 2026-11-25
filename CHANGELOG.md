@@ -27,6 +27,10 @@ follow [Semantic Versioning](https://semver.org/).
   workflow with provenance, so the install line is now `npm install exactly-once-webhooks`
   and the README has an npm version badge. The GitHub Release still carries the same
   tarball.
+- **Built with TypeScript 7** (was 5.9.3), the native compiler, taken on its own (#31).
+  Nothing a consumer sees changes: the published `dist/` (`.js` and `.d.ts`) built by
+  7.0.2 is byte-identical to what 5.9.3 built from the same source. TypeScript is a dev
+  dependency only, so installs are unaffected.
 
 ### Fixed
 - **`fromNodeRedis` now typechecks with node-redis 4.** The README's own example,
