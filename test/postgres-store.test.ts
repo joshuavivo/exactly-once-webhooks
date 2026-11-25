@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { createPostgresStore, pruneExpiredKeys, type Pool } from "../src/postgres-store.ts";
 import { runContract } from "./contract.ts";
@@ -100,8 +100,9 @@ if (url) {
   });
 
   // Close the SHARED pool the contract used, or its open handles keep the process
-  // alive and the CI job hangs. (Runs after the contract tests above.)
-  test("close the postgres pool", async () => {
+  // alive and the run hangs. A hook, not a test: it must also run when a name
+  // filter (`--test-name-pattern`) selects only some tests.
+  after(async () => {
     const closable = shared as unknown as { end?: () => Promise<void> } | null;
     if (closable?.end) await closable.end();
   });

@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { createRedisStore, fromNodeRedis, fromIoRedis, SET_IF_VALUE_LUA, DEL_IF_VALUE_LUA, type RedisLike } from "../src/redis-store.ts";
 import { createFakeRedis } from "./fake-redis.ts";
@@ -50,7 +50,10 @@ if (redisUrl) {
     assert.deepEqual(next, { status: "processed", result: "on time" });
   });
 
-  test("close the redis client", async () => {
+  // Quit the client when the file is done. This is a hook, not a test, so it still
+  // runs when a name filter (`--test-name-pattern`) selects only some tests;
+  // as a test it was filtered out and the open connection kept the run alive.
+  after(async () => {
     if (client?.quit) await client.quit();
   });
 } else {

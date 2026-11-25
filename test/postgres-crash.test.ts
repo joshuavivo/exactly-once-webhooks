@@ -140,7 +140,8 @@ if (url) {
     assert.equal(await credits(key), 1, "credited once: by the handler that died after committing");
   });
 
-  test("close the crash-test pool", async () => {
+  // A hook, not a test, so the pool is closed even when a name filter is used.
+  after(async () => {
     await pool.end();
   });
 } else {
