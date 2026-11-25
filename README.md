@@ -210,8 +210,9 @@ to see contention, and a key whose effect fails every time, before it reaches th
 retry cap. The Postgres store accepts the same hook, but it rarely fires there: a
 waiter's `INSERT` blocks on the holder's uncommitted row and takes the claim
 directly when the holder rolls back, so a rollback is not a retry. It does fire there
-when the connection runs at `REPEATABLE READ` or `SERIALIZABLE`: each waiter takes one
-extra pass to read the holder's committed result (DESIGN.md, limitation 8).
+when the connection runs at `REPEATABLE READ` or `SERIALIZABLE`: a waiter that
+started before the holder committed takes one extra pass to read the holder's
+committed result (DESIGN.md, limitation 8).
 
 ## Measured, not claimed
 

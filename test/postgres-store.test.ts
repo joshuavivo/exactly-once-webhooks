@@ -124,16 +124,20 @@ if (url) {
       const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
       let runs = 0;
       const outcomes = await Promise.all(
-        Array.from({ length: 5 }, () => store.run(key, async () => { runs += 1; await pause(20); return "credited"; })),
+        Array.from({ length: 5 }, () => store.run(key, async () => { runs += 1; await pause(150); return "credited"; })),
       );
 
       assert.equal(runs, 1, "the effect ran once");
       assert.equal(outcomes.filter((o) => o.status === "processed").length, 1);
       assert.equal(outcomes.filter((o) => o.status === "duplicate").length, 4);
       for (const o of outcomes) assert.equal(o.result, "credited");
-      // Each of the four waiters takes exactly one extra pass, and the hook is told
-      // which key and which attempt.
-      assert.deepEqual(retries, Array.from({ length: 4 }, () => ({ key, attempt: 1 })));
+      // A waiter that started before the holder committed takes one extra pass,
+      // and the hook is told which key and which attempt. How many of the four
+      // that is depends on timing, so the count is a range; what each call says
+      // is exact. The effect holds its claim for 150 ms so that at least one
+      // waiter has started by then, even on a slow machine.
+      assert.ok(retries.length >= 1 && retries.length <= 4, `onRetry fired ${retries.length} times`);
+      for (const r of retries) assert.deepEqual(r, { key, attempt: 1 });
       await pool.end();
     });
   }

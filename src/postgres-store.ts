@@ -26,9 +26,10 @@ export type PostgresStoreOptions = {
    *  uncommitted row and claims the key directly if the holder rolls back, so a
    *  rollback does NOT cause a retry. It fires in two cases: a committed row
    *  vanishes between the INSERT and the read (e.g. pruned), or the connection
-   *  runs at REPEATABLE READ or SERIALIZABLE, where each waiter takes one more
-   *  pass to read the holder's committed result (DESIGN.md, limitation 8). On
-   *  Redis it fires on every holder failure. */
+   *  runs at REPEATABLE READ or SERIALIZABLE, where a waiter that started
+   *  before the holder committed takes one more pass to read the holder's
+   *  committed result (DESIGN.md, limitation 8). On Redis it fires on every
+   *  holder failure. */
   onRetry?: (info: RetryInfo) => void;
   /** How long a caller waits for ANOTHER caller's claim on the same key before
    *  giving up, in ms. Default 5000; 0 waits forever (the pre-0.9 behaviour).
