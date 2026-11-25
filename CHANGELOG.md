@@ -12,6 +12,10 @@ follow [Semantic Versioning](https://semver.org/).
   checked against the outcome computed from the schedule. Runs for the memory store, the
   Redis store (fake and real) and the Postgres store. `fast-check` is a new dev
   dependency; nothing is added at runtime. DESIGN.md, Testing.
+- **Crash tests for the Postgres store.** A handler running in a child process is
+  killed with `SIGKILL` inside its effect, inside its effect with a second delivery
+  waiting, and after commit but before answering. In each case the redelivery leaves
+  exactly one credit row. Real Postgres only; skipped without `DATABASE_URL`.
 
 ### Changed
 - **README: install from npm.** 0.10.1 is on the registry, published by the release

@@ -290,3 +290,19 @@ A failure prints the seed and the smallest failing schedule;
 `EOW_PROPERTY_SEED=<seed> npm test` replays it. It covers interleavings nobody
 thought to write down. It does not cover crashes or expiry: a schedule runs inside
 one process with effects far shorter than any timeout.
+
+Crashes are tested separately, for the Postgres store only, in
+[`test/postgres-crash.test.ts`](test/postgres-crash.test.ts). Each test starts a
+handler in a child process, kills it with `SIGKILL` at a chosen point, then
+delivers the same event again and counts the rows the effect wrote:
+
+| The handler is killed | What the redelivery sees | Credits |
+|---|---|---|
+| inside the effect, before commit | `processed`: the dead transaction left nothing | 1 |
+| inside the effect, with a second delivery already waiting | the waiter takes the claim: `processed` | 1 |
+| after commit, before it could answer the provider | `duplicate`, with the stored result | 1 |
+
+These need a real Postgres, so they skip without `DATABASE_URL`. They do not cover
+a database failover or a network partition between the handler and Postgres, and
+there is no crash test for the Redis store: what it does after a crash is
+limitation 3, and it is not the same guarantee.
