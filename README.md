@@ -104,7 +104,9 @@ The Postgres store rests on two guarantees, not on application logic:
    delivery is ever "the first".
 2. **The loser waits inside that `INSERT`.** A concurrent second delivery's insert
    blocks until the first delivery's transaction ends. On commit it gets zero rows
-   and reads the stored result instead of running the effect again. If the first
+   (at `READ COMMITTED`, the default; at a stricter level it takes one more pass,
+   DESIGN.md limitation 8) and reads the stored result instead of running the effect
+   again. If the first
    effect threw, its transaction rolled back and the second delivery's insert
    claims the key.
 
@@ -207,7 +209,9 @@ waiter has to retry because the holder failed. Point it at a log line or a count
 to see contention, and a key whose effect fails every time, before it reaches the
 retry cap. The Postgres store accepts the same hook, but it rarely fires there: a
 waiter's `INSERT` blocks on the holder's uncommitted row and takes the claim
-directly when the holder rolls back, so a rollback is not a retry.
+directly when the holder rolls back, so a rollback is not a retry. It does fire there
+when the connection runs at `REPEATABLE READ` or `SERIALIZABLE`: each waiter takes one
+extra pass to read the holder's committed result (DESIGN.md, limitation 8).
 
 ## Measured, not claimed
 

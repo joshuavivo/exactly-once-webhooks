@@ -8,9 +8,11 @@
 // effect to the event's own id and let the storage layer guarantee it runs once.
 
 /**
- * Passed to an `onRetry` hook when a caller has to try to claim a key again
+ * Passed to an `onRetry` hook when a caller has to try to claim a key again:
  * because the holder it was waiting on failed (rolled back, or its claim
- * vanished). `attempt` counts this caller's retries for this call: 1 on the first.
+ * vanished), or, on Postgres at REPEATABLE READ or SERIALIZABLE, because the
+ * holder committed and the waiter needs a new transaction to see the result.
+ * `attempt` counts this caller's retries for this call: 1 on the first.
  * A steady trickle is normal contention; a key whose `attempt` keeps climbing has
  * an effect that is failing every time, and will error at the store's cap.
  */
