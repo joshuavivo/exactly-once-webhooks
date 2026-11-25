@@ -253,8 +253,9 @@ How to read it:
   the run if it is ever more.
 - **Postgres pays for its guarantee.** Each call is a transaction with a row lock,
   so it's ~5.7k calls/s here with 32 in flight, and a p99 of ~11 ms. In return, the
-  effect commits atomically with the record. A shared CI runner is noisy, so treat
-  the tail as an upper bound, not a promise.
+  effect commits atomically with the record. A shared CI runner is noisy: that p99 is
+  what this one run measured, not a bound (the earlier run mentioned above measured
+  120 ms).
 - **Hot key ≈ the effect's own time.** With a 20 ms effect, the 99 waiters get their
   answer about when the one real run finishes: memory and Redis add ~0–3 ms. The
   Redis row uses `pollIntervalMs: 2` (bench.ts); at the default of 25 a waiter can
