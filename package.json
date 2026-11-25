@@ -23,6 +23,7 @@
     "src",
     "schema.sql",
     "README.md",
+    "DESIGN.md",
     "LICENSE"
   ],
   "scripts": {

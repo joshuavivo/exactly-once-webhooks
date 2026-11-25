@@ -34,8 +34,9 @@ be merged — that contract is the whole point.
 
 ## How changes land
 
-- Every change goes in through a pull request. `main` is protected: the `tests`
-  workflow (Node 22 and 24, real Postgres and Redis) must pass before a merge,
+- Every change goes in through a pull request. `main` is protected: the `test (22)`
+  and `test (24)` jobs of the `tests` workflow (real Postgres and Redis) must pass
+  before a merge,
   and that applies to the maintainer too.
 - Dependabot opens weekly update PRs for dev dependencies and Actions; they pass
   the same gate as anything else.

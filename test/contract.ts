@@ -5,7 +5,7 @@ import type { IdempotencyStore, Outcome } from "../src/index.ts";
 // The behavioural contract every IdempotencyStore must satisfy, written once and
 // run against every implementation. This is what `types.ts` means by "any store
 // that honours the contract is a valid implementation" — it is not a figure of
-// speech, it is this file, and both the in-memory and the Postgres store run it.
+// speech, it is this file, and the in-memory, Postgres and Redis stores all run it.
 //
 // `makeStore` returns a store to test. `makeKey` returns a key that is unique
 // across test runs — the in-memory store starts empty every time, but the
