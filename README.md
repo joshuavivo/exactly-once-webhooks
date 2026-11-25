@@ -46,6 +46,20 @@ verifies the signature, credits exactly once, writes an append-only ledger row i
 the same Postgres transaction, and dead-letters what it can't apply, with a test
 for each step. `node examples/payment-path/demo.ts` runs it with no services.
 
+## Which store
+
+| | Postgres | Redis | Memory |
+|---|---|---|---|
+| Shared across servers | yes | yes | no, one process |
+| The effect's database write commits with the "done" record | yes, when it goes through `tx` | no: the effect runs, then the result is written | no |
+| Besides a first run that threw (every store frees the key), a later delivery of the same key runs the effect again when | the key has been pruned, or the first run died before commit (its `tx` writes rolled back with it) | the effect outlived `pendingTtlSeconds`; the process died, or the result write failed, after the effect; the key expired (`ttlSeconds`) or Redis evicted it | the process restarted, or the key was evicted past `maxEntries` |
+| Cleanup | you schedule `pruneExpiredKeys` | the TTL expires keys (`ttlSeconds`, default one day) | none by default: every key is kept until you set `maxEntries` |
+| Use it when | the effect writes to the same Postgres | the effect is idempotent itself, or a dedup window is all you need | tests, a CLI, one unreplicated server |
+
+Each cell is the short form of something [DESIGN.md](DESIGN.md) says at length.
+Read its [known limitations](DESIGN.md#known-limitations) before putting money
+through any of the three.
+
 ## The problem, in one test
 
 ```ts
@@ -104,7 +118,9 @@ The Postgres store rests on two guarantees, not on application logic:
    delivery is ever "the first".
 2. **The loser waits inside that `INSERT`.** A concurrent second delivery's insert
    blocks until the first delivery's transaction ends. On commit it gets zero rows
-   and reads the stored result instead of running the effect again. If the first
+   (at `READ COMMITTED`, the default; at a stricter level it takes one more pass,
+   DESIGN.md limitation 8) and reads the stored result instead of running the effect
+   again. If the first
    effect threw, its transaction rolled back and the second delivery's insert
    claims the key.
 
@@ -120,6 +136,16 @@ Runs `effect` once for `key`, within the limits of the store: fully on Postgres
 for the writes made through its transaction (inside the retention window you prune
 to), as a lease on Redis, within one process (and `maxEntries`) in memory.
 [DESIGN.md](DESIGN.md#the-guarantee-stated-precisely) has the exact statement.
+
+It resolves to an `Outcome<T>` (exported, from [`src/types.ts`](src/types.ts)):
+
+```ts
+type Outcome<T> = {
+  status: "processed" | "duplicate";
+  result: T;
+  lostClaim?: true; // Redis store only, and only with "processed"
+};
+```
 
 - First call for a key: runs `effect`, stores the result, returns
   `{ status: "processed", result }`. (Redis only: if the claim expired while the
@@ -207,7 +233,10 @@ waiter has to retry because the holder failed. Point it at a log line or a count
 to see contention, and a key whose effect fails every time, before it reaches the
 retry cap. The Postgres store accepts the same hook, but it rarely fires there: a
 waiter's `INSERT` blocks on the holder's uncommitted row and takes the claim
-directly when the holder rolls back, so a rollback is not a retry.
+directly when the holder rolls back, so a rollback is not a retry. It does fire there
+when the connection runs at `REPEATABLE READ` or `SERIALIZABLE`: a waiter that
+started before the holder committed takes one extra pass to read the holder's
+committed result (DESIGN.md, limitation 8).
 
 ## Measured, not claimed
 
@@ -229,8 +258,9 @@ How to read it:
   the run if it is ever more.
 - **Postgres pays for its guarantee.** Each call is a transaction with a row lock,
   so it's ~5.7k calls/s here with 32 in flight, and a p99 of ~11 ms. In return, the
-  effect commits atomically with the record. A shared CI runner is noisy, so treat
-  the tail as an upper bound, not a promise.
+  effect commits atomically with the record. A shared CI runner is noisy: that p99 is
+  what this one run measured, not a bound (the earlier run mentioned above measured
+  120 ms).
 - **Hot key ≈ the effect's own time.** With a 20 ms effect, the 99 waiters get their
   answer about when the one real run finishes: memory and Redis add ~0–3 ms. The
   Redis row uses `pollIntervalMs: 2` (bench.ts); at the default of 25 a waiter can

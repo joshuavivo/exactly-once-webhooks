@@ -7,10 +7,34 @@ follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- **README: the benchmark note no longer calls the p99 an "upper bound".** One run on
+  a shared runner is one observation; an earlier run measured a 120 ms p99, as the
+  paragraph above the table already says.
+- **README: the API section shows the `Outcome<T>` type** that `run` resolves to,
+  condensed from `src/types.ts`. It was only described in prose.
+- **README: a "Which store" table.** The differences between the three stores were
+  spread over the intro and the API section. One table near the top now puts them side
+  by side; each cell is the short form of something DESIGN.md says at length. No
+  behaviour changed.
 - **README: install from npm.** 0.10.1 is on the registry, published by the release
   workflow with provenance, so the install line is now `npm install exactly-once-webhooks`
   and the README has an npm version badge. The GitHub Release still carries the same
   tarball.
+
+### Fixed
+- **Postgres store: concurrent duplicates at `REPEATABLE READ` or `SERIALIZABLE` now
+  return `duplicate`.** On a connection whose default isolation is stricter than
+  `READ COMMITTED`, a delivery waiting on another delivery's claim got Postgres error
+  `40001` when the holder committed, instead of the stored result. The effect still ran
+  once, and a later redelivery was a duplicate; only the concurrent waiters saw the
+  error. The store now catches `40001` on the claim, before the effect has started,
+  and looks again in a new transaction. **If you use `onRetry` as an alarm:** at those
+  two levels it now fires once for each delivery that started before the holder
+  committed. It did not fire there before, because those deliveries threw. That is
+  ordinary contention, not a failing effect. A `40001` from the effect itself is still
+  re-thrown. If the claim is still failing with `40001` on the 50th pass, the error
+  says so and carries that failure as its `cause`. Tests run the race at both levels
+  against a real Postgres. DESIGN.md, limitation 8.
 
 ## [0.10.1] - 2026-11-23
 
