@@ -124,6 +124,23 @@ test("maxEntries: an in-flight key older than every completed key is skipped by 
   assert.equal(slowRuns, 1);
 });
 
+test("maxEntries forgets by completion order, not by arrival order", async () => {
+  // "slow" arrives first but completes last, so it is the most recently completed
+  // key and must be the one kept. A store that left it at its arrival position
+  // would evict it and keep "a". (A surviving mutant: removing the delete that
+  // moves a completed key to the back of the map passed every other test.)
+  const store = createMemoryStore({ maxEntries: 1 });
+  let finish!: () => void;
+  const gate = new Promise<void>((r) => { finish = r; });
+  const slow = store.run("slow", async () => { await gate; return "slow"; });
+  await store.run("a", async () => "a");
+  finish();
+  await slow;
+
+  assert.equal((await store.run("slow", async () => "again")).status, "duplicate", "the last key to complete is kept");
+  assert.equal((await store.run("a", async () => "again")).status, "processed", "the earlier completion was the one forgotten");
+});
+
 test("maxEntries rejects a non-positive or non-integer value", () => {
   assert.throws(() => createMemoryStore({ maxEntries: 0 }), /positive integer/);
   assert.throws(() => createMemoryStore({ maxEntries: -3 }), /positive integer/);

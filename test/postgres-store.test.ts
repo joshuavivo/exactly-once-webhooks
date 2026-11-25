@@ -142,24 +142,49 @@ test("pruneExpiredKeys issues a windowed DELETE and returns the row count", asyn
 test("a claim that never resolves gives up with a bounded error, not an infinite loop", async () => {
   // The INSERT always loses the claim (0 rows) and the SELECT always finds no
   // committed row (holder rolled back), so every pass retries. The loop is bounded.
+  let connects = 0;
+  let releases = 0;
   const fakeClient = {
     async query(sql: string) {
       void sql;
       return { rows: [] as Array<Record<string, unknown>> }; // BEGIN/INSERT/SELECT/COMMIT all empty
     },
-    release() {},
+    release() { releases += 1; },
   };
-  const fakePool = { async connect() { return fakeClient; } } as unknown as Pool;
+  const fakePool = { async connect() { connects += 1; return fakeClient; } } as unknown as Pool;
   await assert.rejects(
     () => createPostgresStore(fakePool).run("k", async () => "x"),
-    /after \d+ attempts/,
+    /could not claim key "k" after 50 attempts; its row keeps disappearing between claim and read/,
   );
+  assert.equal(connects, 50, "exactly the cap, not one fewer");
+  assert.equal(releases, 50, "every pass gave its connection back");
 });
 
 test("pruneExpiredKeys rejects a bad table name and a negative window", async () => {
   const fakePool = { async connect() { throw new Error("unused"); } } as unknown as Pool;
   await assert.rejects(() => pruneExpiredKeys(fakePool, { olderThanSeconds: 1, table: "t; drop" }), /invalid table name/);
   await assert.rejects(() => pruneExpiredKeys(fakePool, { olderThanSeconds: -1 }), /non-negative/);
+});
+
+test("pruneExpiredKeys accepts a window of 0 and releases its connection even when the DELETE fails", async () => {
+  let releases = 0;
+  let fail = false;
+  const fakeClient = {
+    async query() {
+      if (fail) throw new Error("connection lost");
+      return { rows: [], rowCount: 0 };
+    },
+    release() { releases += 1; },
+  };
+  const fakePool = { async connect() { return fakeClient; } } as unknown as Pool;
+
+  // 0 means "every finished key": allowed, unlike a negative window.
+  assert.equal(await pruneExpiredKeys(fakePool, { olderThanSeconds: 0 }), 0);
+  assert.equal(releases, 1);
+
+  fail = true;
+  await assert.rejects(() => pruneExpiredKeys(fakePool, { olderThanSeconds: 60 }), /connection lost/);
+  assert.equal(releases, 2, "the connection went back to the pool after the failure");
 });
 
 

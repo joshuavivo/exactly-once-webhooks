@@ -35,6 +35,21 @@ if (redisUrl) {
     makeStore: async () => createRedisStore(fromNodeRedis(await connect()), { keyPrefix: `eow:${runId}:`, pollIntervalMs: 2 }),
     makeKey: (name) => name,
   });
+  test("[redis-real] an effect that outlives its claim is flagged lostClaim through the real adapter", async () => {
+    // The fake proves the store's logic. This proves the adapter and the Lua
+    // compare-and-set against a real server: once the 50 ms claim has expired,
+    // the result write must report that it did not apply.
+    const store = createRedisStore(fromNodeRedis(await connect()), { keyPrefix: `eow:${runId}:`, pendingTtlSeconds: 0.05 });
+    const slow = await store.run("outlives_claim", async () => {
+      await new Promise((r) => setTimeout(r, 200));
+      return "late";
+    });
+    assert.deepEqual(slow, { status: "processed", result: "late", lostClaim: true });
+    // Nothing was recorded, so the next delivery runs the effect again, in time.
+    const next = await store.run("outlives_claim", async () => "on time");
+    assert.deepEqual(next, { status: "processed", result: "on time" });
+  });
+
   test("close the redis client", async () => {
     if (client?.quit) await client.quit();
   });
