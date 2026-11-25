@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fc from "fast-check";
 import type { IdempotencyStore, Outcome } from "../src/index.ts";
 
 // The behavioural contract every IdempotencyStore must satisfy, written once and
@@ -16,11 +17,16 @@ export type ContractHarness = {
   label: string;
   makeStore: () => IdempotencyStore<unknown> | Promise<IdempotencyStore<unknown>>;
   makeKey: (name: string) => string;
+  /**
+   * How many generated schedules the property test runs. Default 100, which is
+   * what every harness in this repo uses, the real-server ones included.
+   */
+  propertyRuns?: number;
 };
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export function runContract({ label, makeStore, makeKey }: ContractHarness): void {
+export function runContract({ label, makeStore, makeKey, propertyRuns = 100 }: ContractHarness): void {
   test(`[${label}] runs the effect once and reports it as processed`, async () => {
     const store = await makeStore();
     let runs = 0;
@@ -161,5 +167,101 @@ export function runContract({ label, makeStore, makeKey }: ContractHarness): voi
       (s) => (s as PromiseFulfilledResult<Outcome<unknown>>).value.status === "processed",
     );
     assert.equal(processed.length, 1, "exactly one caller processed the rerun; the rest are duplicates");
+  });
+
+  test(`[${label}] property: any schedule of duplicate, concurrent and failing deliveries runs each key's effect to success at most once`, async () => {
+    // The tests above each pin one hand-written interleaving. This one generates
+    // them: a few keys, up to eight deliveries with random start times and effect
+    // durations, and a plan for which attempts of each key's effect throw. The
+    // expected outcome is computed from the plan alone, then compared with what
+    // the store did. On failure fast-check prints the seed and the smallest
+    // schedule that still fails; rerun it with EOW_PROPERTY_SEED=<seed>.
+    // EOW_PROPERTY_NO_SHRINK=1 stops at the first failing schedule instead of
+    // searching for a smaller one (the mutation run sets it: it only needs to know
+    // that the test failed, and shrinking against a broken store can take minutes).
+    const store = await makeStore();
+    let caseNo = 0;
+    const schedule = fc.record({
+      // failsFirst[k]: how many attempts of key k's effect throw before one succeeds.
+      failsFirst: fc.array(fc.integer({ min: 0, max: 2 }), { minLength: 1, maxLength: 3 }),
+      deliveries: fc.array(
+        fc.record({
+          key: fc.nat({ max: 2 }),
+          startAfterMs: fc.integer({ min: 0, max: 6 }),
+          effectMs: fc.integer({ min: 0, max: 4 }),
+        }),
+        { minLength: 1, maxLength: 8 },
+      ),
+    });
+
+    await fc.assert(
+      fc.asyncProperty(schedule, async ({ failsFirst, deliveries }) => {
+        caseNo += 1;
+        const keyCount = failsFirst.length;
+        const state = failsFirst.map(() => ({ attempts: 0, inFlight: 0, maxInFlight: 0, successes: 0, successAttempt: 0 }));
+
+        const calls = deliveries.map(async (d) => {
+          const k = d.key % keyCount;
+          const st = state[k]!;
+          await wait(d.startAfterMs);
+          const outcome = await store.run(makeKey(`prop_${caseNo}_${k}`), async () => {
+            const attempt = ++st.attempts;
+            st.inFlight += 1;
+            st.maxInFlight = Math.max(st.maxInFlight, st.inFlight);
+            try {
+              await wait(d.effectMs);
+              if (attempt <= failsFirst[k]!) throw new Error(`planned failure ${attempt}`);
+              st.successes += 1;
+              st.successAttempt = attempt;
+              return attempt;
+            } finally {
+              st.inFlight -= 1;
+            }
+          });
+          return { k, outcome };
+        });
+        const settled = await Promise.allSettled(calls);
+
+        for (let k = 0; k < keyCount; k++) {
+          const st = state[k]!;
+          const fails = failsFirst[k]!;
+          const delivered = deliveries.filter((d) => d.key % keyCount === k).length;
+          // Attempts for one key run one after another, and each failed attempt
+          // throws to exactly one caller. So the plan fixes the outcome:
+          const expectedFailures = Math.min(delivered, fails);
+          const expectedSuccess = delivered > fails ? 1 : 0;
+
+          assert.ok(st.maxInFlight <= 1, `key ${k}: ${st.maxInFlight} effects were in flight at once`);
+          assert.equal(st.successes, expectedSuccess, `key ${k}: effect succeeded ${st.successes} times`);
+          assert.equal(st.attempts, expectedFailures + expectedSuccess, `key ${k}: effect was attempted ${st.attempts} times`);
+
+          const mine = settled.filter((_, i) => deliveries[i]!.key % keyCount === k);
+          const rejected = mine.filter((s) => s.status === "rejected") as PromiseRejectedResult[];
+          const fulfilled = (mine.filter((s) => s.status === "fulfilled") as Array<
+            PromiseFulfilledResult<{ k: number; outcome: Outcome<number> }>
+          >).map((s) => s.value.outcome);
+          assert.equal(rejected.length, expectedFailures, `key ${k}: ${rejected.length} callers were rejected`);
+          for (const r of rejected) assert.match(String(r.reason), /planned failure/, "a caller only ever sees the effect's own error");
+          assert.equal(fulfilled.length, delivered - expectedFailures);
+          assert.equal(fulfilled.filter((o) => o.status === "processed").length, expectedSuccess, `key ${k}: exactly the one successful run reports processed`);
+          for (const o of fulfilled) assert.equal(o.result, st.successAttempt, `key ${k}: every caller sees the one successful run's result`);
+
+          // A late redelivery of a handled key is a duplicate and runs nothing.
+          if (expectedSuccess === 1) {
+            const late = await store.run(makeKey(`prop_${caseNo}_${k}`), async () => {
+              st.attempts += 1;
+              return -1;
+            });
+            assert.deepEqual(late, { status: "duplicate", result: st.successAttempt });
+            assert.equal(st.attempts, expectedFailures + 1, `key ${k}: a late redelivery ran the effect again`);
+          }
+        }
+      }),
+      {
+        numRuns: propertyRuns,
+        endOnFailure: process.env.EOW_PROPERTY_NO_SHRINK === "1",
+        ...(process.env.EOW_PROPERTY_SEED ? { seed: Number(process.env.EOW_PROPERTY_SEED) } : {}),
+      },
+    );
   });
 }

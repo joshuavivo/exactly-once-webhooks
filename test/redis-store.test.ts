@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { createRedisStore, fromNodeRedis, fromIoRedis, SET_IF_VALUE_LUA, DEL_IF_VALUE_LUA, type RedisLike } from "../src/redis-store.ts";
 import { createFakeRedis } from "./fake-redis.ts";
@@ -35,7 +35,25 @@ if (redisUrl) {
     makeStore: async () => createRedisStore(fromNodeRedis(await connect()), { keyPrefix: `eow:${runId}:`, pollIntervalMs: 2 }),
     makeKey: (name) => name,
   });
-  test("close the redis client", async () => {
+  test("[redis-real] an effect that outlives its claim is flagged lostClaim through the real adapter", async () => {
+    // The fake proves the store's logic. This proves the adapter and the Lua
+    // compare-and-set against a real server: once the 50 ms claim has expired,
+    // the result write must report that it did not apply.
+    const store = createRedisStore(fromNodeRedis(await connect()), { keyPrefix: `eow:${runId}:`, pendingTtlSeconds: 0.05 });
+    const slow = await store.run("outlives_claim", async () => {
+      await new Promise((r) => setTimeout(r, 200));
+      return "late";
+    });
+    assert.deepEqual(slow, { status: "processed", result: "late", lostClaim: true });
+    // Nothing was recorded, so the next delivery runs the effect again, in time.
+    const next = await store.run("outlives_claim", async () => "on time");
+    assert.deepEqual(next, { status: "processed", result: "on time" });
+  });
+
+  // Quit the client when the file is done. This is a hook, not a test, so it still
+  // runs when a name filter (`--test-name-pattern`) selects only some tests;
+  // as a test it was filtered out and the open connection kept the run alive.
+  after(async () => {
     if (client?.quit) await client.quit();
   });
 } else {
@@ -43,6 +61,38 @@ if (redisUrl) {
 }
 
 // Redis-specific behaviour the other stores do not have.
+
+test("keys are stored under the prefix: \"eow:\" by default, or the one given", async () => {
+  // Pinned with a recording adapter, not a real server: a wrong default prefix
+  // still dedups, so nothing else notices it. It matters because the prefix is
+  // what keeps this library's keys apart from the application's own.
+  const seen: string[] = [];
+  const recording = (): RedisLike => {
+    const inner = createFakeRedis();
+    return { ...inner, setClaim: (key, value, ttl) => { seen.push(key); return inner.setClaim(key, value, ttl); } };
+  };
+  await createRedisStore(recording()).run("evt_1", async () => "ok");
+  await createRedisStore(recording(), { keyPrefix: "billing:" }).run("evt_1", async () => "ok");
+  await createRedisStore(recording(), { keyPrefix: "" }).run("evt_1", async () => "ok");
+  assert.deepEqual(seen, ["eow:evt_1", "billing:evt_1", "evt_1"]);
+});
+
+test("a key whose holder vanishes every time gives up after exactly 50 claim attempts", async () => {
+  // The claim always loses and the key is always gone by the time the waiter
+  // looks, so every pass retries. The loop is bounded, and the error says why.
+  let claims = 0;
+  const neverClaims: RedisLike = {
+    async setClaim() { claims += 1; return false; },
+    async setIfValue() { return false; },
+    async get() { return null; },
+    async delIfValue() { return false; },
+  };
+  await assert.rejects(
+    () => createRedisStore(neverClaims).run("evt_stuck", async () => "never"),
+    /could not claim key "evt_stuck" after 50 attempts; its holder keeps failing/,
+  );
+  assert.equal(claims, 50, "exactly the cap, not one fewer");
+});
 
 test("a thrown effect deletes the key, leaving nothing to dedup against", async () => {
   const redis = createFakeRedis();

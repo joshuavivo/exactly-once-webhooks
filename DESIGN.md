@@ -292,3 +292,95 @@ the *same* contract against real servers when `DATABASE_URL` / `REDIS_URL` are s
 (CI sets both via service containers), with per-run key salting so durable data
 does not collide across runs. "Any store that honours the contract is valid" is therefore executable, not
 a slogan.
+
+The contract's last test is generated rather than hand-written. Using
+[fast-check](https://fast-check.dev/) (a dev dependency; the library still has no
+runtime dependencies), it builds 100 schedules per store: up to three keys, up to
+eight deliveries with random start times and effect durations, and a plan for how
+many attempts of each key's effect throw before one succeeds. The expected result
+is computed from the plan alone (how many callers are rejected, whether the effect
+succeeds, what every other caller is told) and compared with what the store did,
+along with a check that no two effects for one key were ever in flight together.
+A failure prints the seed and the smallest failing schedule;
+`EOW_PROPERTY_SEED=<seed> npm test` replays it. It covers interleavings nobody
+thought to write down. It does not cover crashes or expiry: a schedule runs inside
+one process with effects far shorter than any timeout.
+
+Crashes are tested separately, for the Postgres store only, in
+[`test/postgres-crash.test.ts`](test/postgres-crash.test.ts). Each test starts a
+handler in a child process, kills it with `SIGKILL` at a chosen point, then
+delivers the same event again and counts the rows the effect wrote:
+
+| The handler is killed | What the redelivery sees | Credits |
+|---|---|---|
+| inside the effect, before commit | `processed`: the dead transaction left nothing | 1 |
+| inside the effect, with a second delivery already waiting | the waiter takes the claim: `processed` | 1 |
+| after commit, before it could answer the provider | `duplicate`, with the stored result | 1 |
+
+These need a real Postgres, so they skip without `DATABASE_URL`. They do not cover
+a database failover or a network partition between the handler and Postgres, and
+there is no crash test for the Redis store: what it does after a crash is
+limitation 3, and it is not the same guarantee.
+
+### Do the tests catch a broken store?
+
+Mutation testing answers that: [Stryker](https://stryker-mutator.io/) makes one
+small change to `src/` at a time (flips a comparison, empties a block, removes a
+call) and runs the whole suite against real Postgres and Redis. A change no test
+notices is a "survivor". `make mutation` runs it; it takes 30 to 40 minutes.
+
+Measured on 2026-11-25 at commit `18dba0b`, which includes the isolation fix
+(limitation 8), Node 26, Postgres 16, on servers emptied before the run,
+323 mutants:
+
+| Result | Count | Meaning |
+|---|---:|---|
+| Killed | 238 | a test failed |
+| Timed out | 73 | the suite hung until the tool stopped it |
+| Survived | 12 | every test still passed |
+
+The split between killed and timed out can move by one from run to run: one
+mutant was killed in one run and timed out in the next, on identical source.
+
+Stryker's headline score counts a timeout as detected, which gives 96%. Counting
+only failed assertions it is 74%. Both are true; the table is the honest form.
+
+The first run, before the tests it prompted, had 23 survivors. Twelve of those no
+longer survive, and they came from ten gaps that now each have a test: eviction
+dropping an in-flight key, eviction by arrival order instead of completion
+order, the Postgres claim cap being 49 instead of 50, its emptied give-up
+message, `pruneExpiredKeys` rejecting a window of 0 and not releasing its
+connection (two mutants), the node-redis adapter reporting a result write as
+applied when the claim had expired, the default Redis key prefix (two mutants),
+and the Redis claim cap and its give-up message.
+
+One of those is worth telling. In the second run the key-prefix change looked
+caught, and it was not: the real-Redis tests failed only because an earlier
+run of the same change had left keys without the run's prefix on the server.
+Rerunning that one change on an empty server showed it surviving, so it got a
+test of its own that looks at the stored key.
+
+Eleven of the first run's survivors remain, and the isolation fix added one more
+of a kind already on the list (a second place that calls `onRetry`). The 12, by
+kind:
+
+- **Message text** (1): emptying the second half of the lock-timeout error. No
+  test pins that wording.
+- **No observable difference** (10): calling an absent `onRetry` inside a block
+  that already ignores its errors (3); the placeholder status string in a
+  pending entry, which nothing reads (2); the adapters' return value from the
+  release-on-failure delete, which the store ignores (4); and treating any
+  committed row as done, when the store only ever commits done rows (1).
+- **Real, untested** (1): `>` versus `>=` on the Redis wait deadline.
+
+Two things about the tool itself. It is not a dev dependency: it pulls in
+packages with open advisories, and `npm audit` on this repository reports none, so
+`make mutation` installs it without saving it. And it is configured for one
+worker: with 4 and 6 workers on a shared database the runs stalled, with one they
+did not. The cause was not pinned down.
+
+Stryker 10.1.1 does not run under TypeScript 7: it calls a compiler function the
+native compiler no longer has. So `make mutation` also installs TypeScript 5.9.3
+for the run, without saving it, and reinstalls the locked dependencies when the
+run ends. The tests go through Node, not the compiler, so this does not change
+what is measured.

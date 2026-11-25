@@ -92,6 +92,55 @@ test("maxEntries never evicts an in-flight key under contention", async () => {
   assert.equal(results.filter((r) => r.status === "processed").length, 1);
 });
 
+test("maxEntries: an in-flight key older than every completed key is skipped by eviction", async () => {
+  // The case the test above does not reach: the in-flight key is the OLDEST entry,
+  // so it is the first one eviction looks at when other keys complete and push the
+  // store over its cap. If eviction dropped it, a second delivery arriving while
+  // the first is still running would find no entry and run the effect again.
+  // (Found by mutation testing: replacing eviction's "is this key done?" check
+  // with `true` passed every other test.)
+  const store = createMemoryStore({ maxEntries: 1 });
+  let slowRuns = 0;
+  let finish!: () => void;
+  const gate = new Promise<void>((r) => { finish = r; });
+  const slow = async () => {
+    slowRuns += 1;
+    await gate;
+    return "slow";
+  };
+
+  const first = store.run("slow", slow); // pending, and the oldest entry in the store
+  await store.run("a", async () => "a");
+  await store.run("b", async () => "b"); // two completed keys: over the cap of 1, eviction runs
+  const second = store.run("slow", slow); // must wait on the pending entry, not start a new run
+  finish();
+
+  assert.deepEqual(await first, { status: "processed", result: "slow" });
+  assert.deepEqual(await second, { status: "duplicate", result: "slow" });
+  assert.equal(slowRuns, 1, "the in-flight key was not evicted, so its effect ran once");
+  // With a cap of 1 the store now remembers only the most recently completed key,
+  // which is "slow" itself.
+  assert.deepEqual(await store.run("slow", slow), { status: "duplicate", result: "slow" });
+  assert.equal(slowRuns, 1);
+});
+
+test("maxEntries forgets by completion order, not by arrival order", async () => {
+  // "slow" arrives first but completes last, so it is the most recently completed
+  // key and must be the one kept. A store that left it at its arrival position
+  // would evict it and keep "a". (A surviving mutant: removing the delete that
+  // moves a completed key to the back of the map passed every other test.)
+  const store = createMemoryStore({ maxEntries: 1 });
+  let finish!: () => void;
+  const gate = new Promise<void>((r) => { finish = r; });
+  const slow = store.run("slow", async () => { await gate; return "slow"; });
+  await store.run("a", async () => "a");
+  finish();
+  await slow;
+
+  assert.equal((await store.run("slow", async () => "again")).status, "duplicate", "the last key to complete is kept");
+  assert.equal((await store.run("a", async () => "again")).status, "processed", "the earlier completion was the one forgotten");
+});
+
 test("maxEntries rejects a non-positive or non-integer value", () => {
   assert.throws(() => createMemoryStore({ maxEntries: 0 }), /positive integer/);
   assert.throws(() => createMemoryStore({ maxEntries: -3 }), /positive integer/);
