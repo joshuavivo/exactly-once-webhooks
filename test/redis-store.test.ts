@@ -59,6 +59,38 @@ if (redisUrl) {
 
 // Redis-specific behaviour the other stores do not have.
 
+test("keys are stored under the prefix: \"eow:\" by default, or the one given", async () => {
+  // Pinned with a recording adapter, not a real server: a wrong default prefix
+  // still dedups, so nothing else notices it. It matters because the prefix is
+  // what keeps this library's keys apart from the application's own.
+  const seen: string[] = [];
+  const recording = (): RedisLike => {
+    const inner = createFakeRedis();
+    return { ...inner, setClaim: (key, value, ttl) => { seen.push(key); return inner.setClaim(key, value, ttl); } };
+  };
+  await createRedisStore(recording()).run("evt_1", async () => "ok");
+  await createRedisStore(recording(), { keyPrefix: "billing:" }).run("evt_1", async () => "ok");
+  await createRedisStore(recording(), { keyPrefix: "" }).run("evt_1", async () => "ok");
+  assert.deepEqual(seen, ["eow:evt_1", "billing:evt_1", "evt_1"]);
+});
+
+test("a key whose holder vanishes every time gives up after exactly 50 claim attempts", async () => {
+  // The claim always loses and the key is always gone by the time the waiter
+  // looks, so every pass retries. The loop is bounded, and the error says why.
+  let claims = 0;
+  const neverClaims: RedisLike = {
+    async setClaim() { claims += 1; return false; },
+    async setIfValue() { return false; },
+    async get() { return null; },
+    async delIfValue() { return false; },
+  };
+  await assert.rejects(
+    () => createRedisStore(neverClaims).run("evt_stuck", async () => "never"),
+    /could not claim key "evt_stuck" after 50 attempts; its holder keeps failing/,
+  );
+  assert.equal(claims, 50, "exactly the cap, not one fewer");
+});
+
 test("a thrown effect deletes the key, leaving nothing to dedup against", async () => {
   const redis = createFakeRedis();
   const store = createRedisStore(redis);
