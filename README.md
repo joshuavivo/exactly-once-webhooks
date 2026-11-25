@@ -244,7 +244,8 @@ committed result (DESIGN.md, limitation 8).
 ## Measured, not claimed
 
 From [this run](https://github.com/joshuavivo/exactly-once-webhooks/actions/runs/44785460964) of
-`main` (commit `d79bc75`) on a GitHub-hosted runner (Node 22, linux/x64) against real
+`main` (commit `b341d5d`; the run page shows it as `d79bc75`, the same files before the
+history was rewritten to correct the author email) on a GitHub-hosted runner (Node 22, linux/x64) against real
 Postgres 16 and Redis 7. Throughput and latency vary a lot between runners (an
 earlier run measured Postgres at 1,902 calls/s and a 120 ms p99); the "effect runs"
 column is the one that doesn't move.
