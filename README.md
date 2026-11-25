@@ -135,6 +135,16 @@ for the writes made through its transaction (inside the retention window you pru
 to), as a lease on Redis, within one process (and `maxEntries`) in memory.
 [DESIGN.md](DESIGN.md#the-guarantee-stated-precisely) has the exact statement.
 
+It resolves to an `Outcome<T>` (exported, from [`src/types.ts`](src/types.ts)):
+
+```ts
+type Outcome<T> = {
+  status: "processed" | "duplicate";
+  result: T;
+  lostClaim?: true; // Redis store only, and only with "processed"
+};
+```
+
 - First call for a key: runs `effect`, stores the result, returns
   `{ status: "processed", result }`. (Redis only: if the claim expired while the
   effect ran, the result is not stored and the call adds `lostClaim: true`; see the

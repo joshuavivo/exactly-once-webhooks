@@ -7,6 +7,8 @@ follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- **README: the API section shows the `Outcome<T>` type** that `run` resolves to,
+  condensed from `src/types.ts`. It was only described in prose.
 - **README: a "Which store" table.** The differences between the three stores were
   spread over the intro and the API section. One table near the top now puts them side
   by side; each cell is the short form of something DESIGN.md says at length. No
