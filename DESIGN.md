@@ -274,8 +274,8 @@ These are the things a reviewer should know going in. None are hidden.
    committed row is not in the waiter's snapshot. The store catches that on the
    claim only, starts a new transaction, finds the committed row and returns
    `duplicate` (reported through `onRetry`). Before this was handled, the effect
-   still ran once at those levels, but each concurrent waiter got the raw
-   serialization error. A `40001` raised by your effect's own statements, or by
+   still ran once at those levels, but a waiter that started before the holder
+   committed got the raw serialization error. A `40001` raised by your effect's own statements, or by
    the commit after it, is not caught: the transaction rolls back and the error
    reaches the caller, so the provider's redelivery runs the effect again, which
    is the normal answer to a serialization failure. (Checked against Postgres 16

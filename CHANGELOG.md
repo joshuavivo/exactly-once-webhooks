@@ -45,6 +45,13 @@ follow [Semantic Versioning](https://semver.org/).
   Nothing a consumer sees changes: the published `dist/` (`.js` and `.d.ts`) built by
   7.0.2 is byte-identical to what 5.9.3 built from the same source. TypeScript is a dev
   dependency only, so installs are unaffected.
+- **README says the package is ESM only.** `require()` fails with
+  `ERR_PACKAGE_PATH_NOT_EXPORTED`; the README now says so and shows `await import()`
+  for CommonJS callers. No change to the package's exports.
+- **DESIGN.md ships in the npm package.** The published README links to it, and it was
+  not in the `files` list, so those links pointed at a file the tarball did not have.
+- **DESIGN, limitation 8: "each concurrent waiter" corrected** to a waiter that started
+  before the holder committed, matching the README and the CHANGELOG entry below.
 
 ### Fixed
 - **`fromNodeRedis` now typechecks with node-redis 4.** The README's own example,
