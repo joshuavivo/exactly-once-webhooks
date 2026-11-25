@@ -6,14 +6,6 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Fixed
-- **`fromNodeRedis` now typechecks with node-redis 4.** The README's own example,
-  `createRedisStore(fromNodeRedis(createClient()))`, failed to compile against node-redis 4
-  (TS2345 on `set`): the adapter declared `NX?: boolean`, and node-redis 4's `SetOptions`
-  only accepts `NX: true`. It now declares exactly the options it passes
-  (`{ NX: true; PX: number }`). Runtime behaviour is unchanged; the real-Redis contract
-  already passed on 4.
-
 ### Added
 - **node-redis 4, 5 and 6 checked in CI.** A `redis-compat` job installs each major,
   typechecks a compile-only copy of the README example (`test/node-redis-types.ts`) and
@@ -37,6 +29,12 @@ follow [Semantic Versioning](https://semver.org/).
   tarball.
 
 ### Fixed
+- **`fromNodeRedis` now typechecks with node-redis 4.** The README's own example,
+  `createRedisStore(fromNodeRedis(createClient()))`, failed to compile against node-redis 4
+  (TS2345 on `set`): the adapter declared `NX?: boolean`, and node-redis 4's `SetOptions`
+  only accepts `NX: true`. It now declares exactly the options it passes
+  (`{ NX: true; PX: number }`). Runtime behaviour is unchanged; the real-Redis contract
+  already passed on 4.
 - **Postgres store: concurrent duplicates at `REPEATABLE READ` or `SERIALIZABLE` now
   return `duplicate`.** On a connection whose default isolation is stricter than
   `READ COMMITTED`, a delivery waiting on another delivery's claim got Postgres error
