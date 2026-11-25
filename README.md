@@ -41,6 +41,9 @@ installs that tarball into a fresh project and imports it, on every change.
 
 No runtime dependencies. Node 22.18+ (it ships as TypeScript and compiled JS).
 
+ESM only: `import` it. `require("exactly-once-webhooks")` fails with
+`ERR_PACKAGE_PATH_NOT_EXPORTED`; from CommonJS, use `await import("exactly-once-webhooks")`.
+
 **The whole payment path in one place:** [`examples/payment-path`](examples/payment-path)
 verifies the signature, credits exactly once, writes an append-only ledger row in
 the same Postgres transaction, and dead-letters what it can't apply, with a test
