@@ -6,6 +6,21 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **`fromNodeRedis` now typechecks with node-redis 4.** The README's own example,
+  `createRedisStore(fromNodeRedis(createClient()))`, failed to compile against node-redis 4
+  (TS2345 on `set`): the adapter declared `NX?: boolean`, and node-redis 4's `SetOptions`
+  only accepts `NX: true`. It now declares exactly the options it passes
+  (`{ NX: true; PX: number }`). Runtime behaviour is unchanged; the real-Redis contract
+  already passed on 4.
+
+### Added
+- **node-redis 4, 5 and 6 checked in CI.** A `redis-compat` job installs each major,
+  typechecks a compile-only copy of the README example (`test/node-redis-types.ts`) and
+  runs the real-Redis contract, including the concurrent double-credit race. The dev
+  dependency moves to node-redis 6 (#30), and the README says which majors are tested
+  instead of "v4+".
+
 ### Changed
 - **README: the benchmark note no longer calls the p99 an "upper bound".** One run on
   a shared runner is one observation; an earlier run measured a 120 ms p99, as the
