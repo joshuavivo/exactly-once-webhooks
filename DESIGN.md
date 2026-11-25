@@ -315,7 +315,9 @@ call) and runs the whole suite against real Postgres and Redis. A change no test
 notices is a "survivor". `make mutation` runs it; it takes about 30 minutes.
 
 Measured on 2026-11-25 at commit `aadb2a6`, Node 26, Postgres 16, on servers
-emptied before the run, 303 mutants:
+emptied before the run, 303 mutants. That commit is from before the isolation
+fix (limitation 8) was merged, so these numbers describe the code without it; they
+are rerun on the merged code before a release quotes them:
 
 | Result | Count | Meaning |
 |---|---:|---|

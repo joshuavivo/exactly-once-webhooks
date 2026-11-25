@@ -18,7 +18,8 @@ follow [Semantic Versioning](https://semver.org/).
   exactly one credit row. Real Postgres only; skipped without `DATABASE_URL`.
 - **Mutation testing, with its results in DESIGN.md.** `make mutation` runs Stryker
   over `src/` against real Postgres and Redis. Of 303 mutants: 225 killed, 67 timed
-  out, 11 survived, each survivor accounted for. The runs found ten gaps in
+  out, 11 survived, each survivor accounted for (measured before the isolation fix
+  below was merged; rerun on the merged code before release). The runs found ten gaps in
   the tests (eviction of an in-flight key in the memory store among them); each now
   has a test. Stryker is installed for the run only, not added to `package.json`.
 - **README: install from npm.** 0.10.1 is on the registry, published by the release
