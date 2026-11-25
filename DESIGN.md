@@ -59,7 +59,8 @@ The guarantee rests on the database, not on application logic:
   the app, decides, and it decides once.
 - **The losers wait inside that same `INSERT`.** While the winner's row is
   uncommitted, a concurrent insert of the same key blocks until the winner's
-  transaction ends. On the winner's `COMMIT` the loser's insert returns zero rows,
+  transaction ends. On the winner's `COMMIT` the loser's insert returns zero rows
+  (at `READ COMMITTED`, the default; limitation 8 covers stricter levels),
   and the loser reads the committed row (`SELECT ... FOR UPDATE`, which no longer
   has anything to wait for) and returns the stored result. On the winner's
   `ROLLBACK` (its effect threw) the loser's insert succeeds and it becomes the new
@@ -119,7 +120,8 @@ not a history of what was tried and in what order.
   (`current transaction is aborted, commands ignored until end of transaction
   block`) unless it is wrapped in a savepoint, which costs a subtransaction and an
   `ERROR` in the logs on every duplicate. `ON CONFLICT DO NOTHING RETURNING`
-  reports "not you" as zero rows with no error. Its insert has already waited for
+  reports "not you" as zero rows with no error (at `READ COMMITTED`; limitation 8
+  covers stricter levels). Its insert has already waited for
   the winner to finish, so the loser's next statement reads the winner's committed
   result.
 - **An advisory lock** (`pg_advisory_xact_lock(hashtext(key))`). It serialises
@@ -261,10 +263,23 @@ These are the things a reviewer should know going in. None are hidden.
 7. **A holder that rolls back hands the key straight to a waiter.** The waiter's
    `INSERT ... ON CONFLICT DO NOTHING` is blocked on the holder's uncommitted row;
    when the holder rolls back, the waiter's insert succeeds and it claims the key
-   (verified against a real Postgres, issue #24). The claim loop's retry pass only
-   runs if a done row vanishes between a caller's INSERT and its read (a prune
-   racing that key), and is capped (`MAX_CLAIM_ATTEMPTS`, 50) so even that case
-   errors instead of spinning.
+   (verified against a real Postgres, issue #24). At `READ COMMITTED` the claim
+   loop's retry pass only runs if a done row vanishes between a caller's INSERT
+   and its read (a prune racing that key), and is capped (`MAX_CLAIM_ATTEMPTS`,
+   50) so even that case errors instead of spinning.
+8. **At `REPEATABLE READ` or `SERIALIZABLE`, a waiter takes a second pass.** The
+   behaviour in 7 is `READ COMMITTED`, the Postgres default. If the connection's
+   default isolation is stricter, the waiter's blocked `INSERT` does not return
+   zero rows when the holder commits: Postgres raises `40001`, because the
+   committed row is not in the waiter's snapshot. The store catches that on the
+   claim only, starts a new transaction, finds the committed row and returns
+   `duplicate` (reported through `onRetry`). Before this was handled, the effect
+   still ran once at those levels, but each concurrent waiter got the raw
+   serialization error. A `40001` raised by your effect's own statements, or by
+   the commit after it, is not caught: the transaction rolls back and the error
+   reaches the caller, so the provider's redelivery runs the effect again, which
+   is the normal answer to a serialization failure. (Checked against Postgres 16
+   at all three levels.)
 
 ## Testing
 
