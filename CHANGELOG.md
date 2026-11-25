@@ -7,6 +7,10 @@ follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- **README: a "Which store" table.** The differences between the three stores were
+  spread over the intro and the API section. One table near the top now puts them side
+  by side; each cell is the short form of something DESIGN.md says at length. No
+  behaviour changed.
 - **README: install from npm.** 0.10.1 is on the registry, published by the release
   workflow with provenance, so the install line is now `npm install exactly-once-webhooks`
   and the README has an npm version badge. The GitHub Release still carries the same

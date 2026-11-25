@@ -46,6 +46,20 @@ verifies the signature, credits exactly once, writes an append-only ledger row i
 the same Postgres transaction, and dead-letters what it can't apply, with a test
 for each step. `node examples/payment-path/demo.ts` runs it with no services.
 
+## Which store
+
+| | Postgres | Redis | Memory |
+|---|---|---|---|
+| Shared across servers | yes | yes | no, one process |
+| The effect's database write commits with the "done" record | yes, when it goes through `tx` | no: the effect runs, then the result is written | no |
+| Besides a first run that threw (every store frees the key), a later delivery of the same key runs the effect again when | the key has been pruned, or the first run died before commit (its `tx` writes rolled back with it) | the effect outlived `pendingTtlSeconds`; the process died, or the result write failed, after the effect; the key expired (`ttlSeconds`) or Redis evicted it | the process restarted, or the key was evicted past `maxEntries` |
+| Cleanup | you schedule `pruneExpiredKeys` | the TTL expires keys (`ttlSeconds`, default one day) | none by default: every key is kept until you set `maxEntries` |
+| Use it when | the effect writes to the same Postgres | the effect is idempotent itself, or a dedup window is all you need | tests, a CLI, one unreplicated server |
+
+Each cell is the short form of something [DESIGN.md](DESIGN.md) says at length.
+Read its [known limitations](DESIGN.md#known-limitations) before putting money
+through any of the three.
+
 ## The problem, in one test
 
 ```ts
