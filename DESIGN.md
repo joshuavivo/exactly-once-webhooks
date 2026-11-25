@@ -339,6 +339,9 @@ Measured on 2026-11-25 at commit `18dba0b`, which includes the isolation fix
 | Timed out | 73 | the suite hung until the tool stopped it |
 | Survived | 12 | every test still passed |
 
+The split between killed and timed out can move by one from run to run: one
+mutant was killed in one run and timed out in the next, on identical source.
+
 Stryker's headline score counts a timeout as detected, which gives 96%. Counting
 only failed assertions it is 74%. Both are true; the table is the honest form.
 
@@ -354,9 +357,8 @@ and the Redis claim cap and its give-up message.
 One of those is worth telling. In the second run the key-prefix change looked
 caught, and it was not: the real-Redis tests failed only because an earlier
 run of the same change had left keys without the run's prefix on the server.
-Rerunning that one change on an
-empty server showed it surviving, so it got a test of its own that looks at the
-stored key.
+Rerunning that one change on an empty server showed it surviving, so it got a
+test of its own that looks at the stored key.
 
 Eleven of the first run's survivors remain, and the isolation fix added one more
 of a kind already on the list (a second place that calls `onRetry`). The 12, by
