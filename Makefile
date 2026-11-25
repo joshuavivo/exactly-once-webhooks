@@ -28,5 +28,6 @@ db-test: up     ## run the full suite against real Postgres + Redis
 	DATABASE_URL=postgres://eow:eow@localhost:5433/eow REDIS_URL=redis://localhost:6380 npm test
 
 mutation: up    ## mutation-test src/ against real Postgres + Redis (about 30 minutes, see DESIGN.md)
-	npm install --no-save @stryker-mutator/core@10.1.1
-	DATABASE_URL=postgres://eow:eow@localhost:5433/eow REDIS_URL=redis://localhost:6380 npx stryker run
+	# Stryker 10.1.1 needs the TypeScript 5 compiler API; neither is saved, and npm ci puts TypeScript 7 back.
+	npm install --no-save @stryker-mutator/core@10.1.1 typescript@5.9.3
+	DATABASE_URL=postgres://eow:eow@localhost:5433/eow REDIS_URL=redis://localhost:6380 npx stryker run; s=$$?; npm ci; exit $$s

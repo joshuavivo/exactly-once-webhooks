@@ -327,18 +327,17 @@ limitation 3, and it is not the same guarantee.
 Mutation testing answers that: [Stryker](https://stryker-mutator.io/) makes one
 small change to `src/` at a time (flips a comparison, empties a block, removes a
 call) and runs the whole suite against real Postgres and Redis. A change no test
-notices is a "survivor". `make mutation` runs it; it takes about 30 minutes.
+notices is a "survivor". `make mutation` runs it; it takes 30 to 40 minutes.
 
-Measured on 2026-11-25 at commit `aadb2a6`, Node 26, Postgres 16, on servers
-emptied before the run, 303 mutants. That commit is from before the isolation
-fix (limitation 8) was merged, so these numbers describe the code without it; they
-are rerun on the merged code before a release quotes them:
+Measured on 2026-11-25 at commit `18dba0b`, which includes the isolation fix
+(limitation 8), Node 26, Postgres 16, on servers emptied before the run,
+323 mutants:
 
 | Result | Count | Meaning |
 |---|---:|---|
-| Killed | 225 | a test failed |
-| Timed out | 67 | the suite hung until the tool stopped it |
-| Survived | 11 | every test still passed |
+| Killed | 238 | a test failed |
+| Timed out | 73 | the suite hung until the tool stopped it |
+| Survived | 12 | every test still passed |
 
 Stryker's headline score counts a timeout as detected, which gives 96%. Counting
 only failed assertions it is 74%. Both are true; the table is the honest form.
@@ -359,12 +358,14 @@ Rerunning that one change on an
 empty server showed it surviving, so it got a test of its own that looks at the
 stored key.
 
-The 11 that remain, by kind:
+Eleven of the first run's survivors remain, and the isolation fix added one more
+of a kind already on the list (a second place that calls `onRetry`). The 12, by
+kind:
 
 - **Message text** (1): emptying the second half of the lock-timeout error. No
   test pins that wording.
-- **No observable difference** (9): calling an absent `onRetry` inside a block
-  that already ignores its errors (2); the placeholder status string in a
+- **No observable difference** (10): calling an absent `onRetry` inside a block
+  that already ignores its errors (3); the placeholder status string in a
   pending entry, which nothing reads (2); the adapters' return value from the
   release-on-failure delete, which the store ignores (4); and treating any
   committed row as done, when the store only ever commits done rows (1).
@@ -375,3 +376,9 @@ packages with open advisories, and `npm audit` on this repository reports none, 
 `make mutation` installs it without saving it. And it is configured for one
 worker: with 4 and 6 workers on a shared database the runs stalled, with one they
 did not. The cause was not pinned down.
+
+Stryker 10.1.1 does not run under TypeScript 7: it calls a compiler function the
+native compiler no longer has. So `make mutation` also installs TypeScript 5.9.3
+for the run, without saving it, and reinstalls the locked dependencies when the
+run ends. The tests go through Node, not the compiler, so this does not change
+what is measured.
