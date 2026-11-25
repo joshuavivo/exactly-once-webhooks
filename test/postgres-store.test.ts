@@ -99,6 +99,68 @@ if (url) {
     await pool.end();
   });
 
+  // A pool can default to a stricter isolation level than READ COMMITTED (a server
+  // or role default, or `options: "-c default_transaction_isolation=..."`). There
+  // a waiter's blocked INSERT does not come back with zero rows when the holder
+  // commits: Postgres raises 40001, because the row it conflicted with is not in
+  // the waiter's snapshot. The store has to turn that into a fresh look, not hand
+  // a serialization error to a caller whose event was in fact handled.
+  for (const level of ["repeatable read", "serializable"]) {
+    test(`[postgres] at ${level}, concurrent deliveries still get one processed and the rest duplicate`, async () => {
+      const specifier = "pg";
+      const pg = (await import(specifier)) as { default: { Pool: new (c: object) => unknown } };
+      const pool = new pg.default.Pool({
+        connectionString: url,
+        options: `-c default_transaction_isolation=${level.replace(" ", "\\ ")}`,
+      }) as unknown as Pool & { end(): Promise<void> };
+      const probe = await pool.connect();
+      const shown = await probe.query("SHOW transaction_isolation");
+      probe.release();
+      assert.equal((shown.rows[0] as { transaction_isolation: string }).transaction_isolation, level, "the pool really runs at this level");
+
+      const retries: Array<{ key: string; attempt: number }> = [];
+      const store = createPostgresStore(pool, { onRetry: (i) => retries.push(i) });
+      const key = `evt_pg_${runId}_iso_${level.replace(" ", "_")}`;
+      const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      let runs = 0;
+      const outcomes = await Promise.all(
+        Array.from({ length: 5 }, () => store.run(key, async () => { runs += 1; await pause(150); return "credited"; })),
+      );
+
+      assert.equal(runs, 1, "the effect ran once");
+      assert.equal(outcomes.filter((o) => o.status === "processed").length, 1);
+      assert.equal(outcomes.filter((o) => o.status === "duplicate").length, 4);
+      for (const o of outcomes) assert.equal(o.result, "credited");
+      // A waiter that started before the holder committed takes one extra pass,
+      // and the hook is told which key and which attempt. How many of the four
+      // that is depends on timing, so the count is a range; what each call says
+      // is exact. The effect holds its claim for 150 ms so that at least one
+      // waiter has started by then, even on a slow machine.
+      assert.ok(retries.length >= 1 && retries.length <= 4, `onRetry fired ${retries.length} times`);
+      for (const r of retries) assert.deepEqual(r, { key, attempt: 1 });
+      await pool.end();
+    });
+  }
+
+  test("[postgres] a serialization failure raised by the effect itself is not retried by the store", async () => {
+    // Only a 40001 on the claim, before the effect has started, is the store's to
+    // absorb. One from the caller's own statements means their transaction lost a
+    // conflict: it rolls back and the error goes to the caller, like any other.
+    const pool = await loadPool();
+    if (!pool) throw new Error("DATABASE_URL set but pg could not be loaded");
+    const store = createPostgresStore(pool);
+    const key = `evt_pg_${runId}_effect_40001`;
+    let runs = 0;
+    const failing = async () => {
+      runs += 1;
+      throw Object.assign(new Error("could not serialize access (from the effect)"), { code: "40001" });
+    };
+    await assert.rejects(() => store.run(key, failing), /from the effect/);
+    assert.equal(runs, 1, "the store did not run the effect again on its own");
+    assert.deepEqual(await store.run(key, async () => "ok"), { status: "processed", result: "ok" });
+    await (pool as unknown as { end(): Promise<void> }).end();
+  });
+
   // Close the SHARED pool the contract used, or its open handles keep the process
   // alive and the CI job hangs. (Runs after the contract tests above.)
   test("close the postgres pool", async () => {
@@ -116,6 +178,41 @@ test("createPostgresStore rejects an unsafe table name", () => {
     () => createPostgresStore(fakePool, { table: "oops; drop table users" }),
     /invalid table name/,
   );
+});
+
+// The cap on claim passes, with a fake pool (no database): a claim that fails with
+// 40001 every time must stop, release every connection, and say why.
+test("a claim that keeps failing with 40001 stops at the cap and names the cause", async () => {
+  let connects = 0;
+  let releases = 0;
+  let effectRuns = 0;
+  const serialization = Object.assign(new Error("could not serialize access due to concurrent update"), { code: "40001" });
+  const fakePool = {
+    async connect() {
+      connects += 1;
+      return {
+        async query(sql: string) {
+          if (/INSERT INTO/.test(sql)) throw serialization;
+          return { rows: [] };
+        },
+        release() { releases += 1; },
+      };
+    },
+  } as unknown as Pool;
+
+  const store = createPostgresStore(fakePool);
+  await assert.rejects(
+    () => store.run("evt_always_40001", async () => { effectRuns += 1; }),
+    (err: Error) => {
+      assert.match(err.message, /could not claim key "evt_always_40001" after 50 attempts/);
+      assert.match(err.message, /still failing with a serialization error \(40001\)/);
+      assert.equal(err.cause, serialization);
+      return true;
+    },
+  );
+  assert.equal(effectRuns, 0, "the effect never ran");
+  assert.equal(connects, 50);
+  assert.equal(releases, 50, "every connection went back");
 });
 
 // pruneExpiredKeys, verified against a fake pool (no database): the DELETE is
