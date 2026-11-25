@@ -131,7 +131,9 @@ if (url) {
       assert.equal(outcomes.filter((o) => o.status === "processed").length, 1);
       assert.equal(outcomes.filter((o) => o.status === "duplicate").length, 4);
       for (const o of outcomes) assert.equal(o.result, "credited");
-      assert.ok(retries.length >= 1, "the waiters' second look is reported through onRetry");
+      // Each of the four waiters takes exactly one extra pass, and the hook is told
+      // which key and which attempt.
+      assert.deepEqual(retries, Array.from({ length: 4 }, () => ({ key, attempt: 1 })));
       await pool.end();
     });
   }
