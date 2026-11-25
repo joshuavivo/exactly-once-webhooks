@@ -24,8 +24,11 @@ export type PostgresStoreOptions = {
    *  an exception from it is ignored so observability can never break the store.
    *  Note: on Postgres this is rare. A waiter's INSERT blocks on the holder's
    *  uncommitted row and claims the key directly if the holder rolls back, so a
-   *  rollback does NOT cause a retry; this fires only if a committed row vanishes
-   *  between the INSERT and the read (e.g. pruned). On Redis it fires on every
+   *  rollback does NOT cause a retry. It fires in two cases: a committed row
+   *  vanishes between the INSERT and the read (e.g. pruned), or the connection
+   *  runs at REPEATABLE READ or SERIALIZABLE, where a waiter that started
+   *  before the holder committed takes one more pass to read the holder's
+   *  committed result (DESIGN.md, limitation 8). On Redis it fires on every
    *  holder failure. */
   onRetry?: (info: RetryInfo) => void;
   /** How long a caller waits for ANOTHER caller's claim on the same key before
@@ -51,9 +54,11 @@ export type PostgresStoreOptions = {
  */
 // Cap on claim passes. A holder that rolls back does NOT cause a retry: the
 // waiter's INSERT is blocked on the holder's uncommitted row and simply claims the
-// key when the rollback lands (issue #24). The only way back round the loop is a
-// committed row that disappears between our INSERT and our read (a prune). The cap
-// turns that pathological case into an error instead of an unbounded spin.
+// key when the rollback lands (issue #24). There are two ways back round the loop:
+// a committed row that disappears between our INSERT and our read (a prune), and
+// a serialization failure (40001) on the claim at REPEATABLE READ or SERIALIZABLE,
+// which normally takes one more pass. The cap turns a case that keeps repeating
+// into an error instead of an unbounded spin.
 const MAX_CLAIM_ATTEMPTS = 50;
 
 export function createPostgresStore(pool: Pool, options: PostgresStoreOptions = {}): IdempotencyStore<Queryable> {
@@ -70,14 +75,21 @@ export function createPostgresStore(pool: Pool, options: PostgresStoreOptions = 
   }
 
   async function run<T>(key: string, effect: (ctx: Queryable) => Promise<T>): Promise<Outcome<T>> {
-    // A loop, not recursion: each pass either resolves the key or retries because a
-    // holder rolled back. Bounded so a key whose holder fails deterministically
-    // raises a clear error instead of recursing/spinning without end.
+    // A loop, not recursion: each pass either resolves the key or goes round again
+    // (see MAX_CLAIM_ATTEMPTS above for the two reasons). Bounded so a case that
+    // keeps repeating raises a clear error instead of spinning without end.
+    // Set when a pass ends in a serialization failure on the claim, cleared at the
+    // start of the next: after the cap it says whether the last pass ended that way.
+    let lastClaimError: unknown;
     for (let attempt = 1; attempt <= MAX_CLAIM_ATTEMPTS; attempt++) {
+      lastClaimError = undefined;
       const client = await pool.connect();
       // Set only when ROLLBACK itself fails: the connection is in an unknown state,
       // so it is destroyed on release instead of going back to the pool.
       let broken: Error | undefined;
+      // True once the effect has been called. A serialization failure before that
+      // point came from the claim; one after it belongs to the caller's own work.
+      let effectStarted = false;
       try {
         await client.query("BEGIN");
         // Bound the wait on another caller's claim (issue #11). SET LOCAL lasts
@@ -87,7 +99,9 @@ export function createPostgresStore(pool: Pool, options: PostgresStoreOptions = 
         await client.query("SELECT set_config('lock_timeout', $1, true)", [String(lockTimeoutMs)]);
 
         // Claim the key. If another transaction holds an uncommitted row for it,
-        // this INSERT waits for it to end: zero rows on its COMMIT, ours on ROLLBACK.
+        // this INSERT waits for it to end: zero rows on its COMMIT (at READ
+        // COMMITTED; a 40001 at stricter levels, handled in the catch below), ours
+        // on ROLLBACK.
         const claimed = await client.query(
           `INSERT INTO ${table} (key, status) VALUES ($1, 'pending')
            ON CONFLICT (key) DO NOTHING
@@ -101,6 +115,7 @@ export function createPostgresStore(pool: Pool, options: PostgresStoreOptions = 
           // the app SET on this connection: that one is back after COMMIT, but the
           // effect itself runs without it (DESIGN.md, limitation 6).
           await client.query("SET LOCAL lock_timeout TO DEFAULT");
+          effectStarted = true;
           const result = await effect(client);
           await client.query(
             `UPDATE ${table} SET status = 'done', result = $2, completed_at = now() WHERE key = $1`,
@@ -135,6 +150,20 @@ export function createPostgresStore(pool: Pool, options: PostgresStoreOptions = 
         await client.query("ROLLBACK").catch((rollbackErr: unknown) => {
           broken = rollbackErr instanceof Error ? rollbackErr : new Error(String(rollbackErr));
         });
+        // At REPEATABLE READ or SERIALIZABLE the blocked INSERT does not return
+        // zero rows when the holder commits: Postgres raises 40001, because the
+        // row it conflicted with is not in this transaction's snapshot. The event
+        // was handled by the holder, so look again in a new transaction, which
+        // sees the committed row and returns it as a duplicate. Only before the
+        // effect: a 40001 from the effect's own statements, or from the commit
+        // after it, goes to the caller like any other failure.
+        if ((err as { code?: string }).code === "40001" && !effectStarted && !broken) {
+          lastClaimError = err;
+          if (options.onRetry) {
+            try { options.onRetry({ key, attempt }); } catch { /* observability must not break the store */ }
+          }
+          continue;
+        }
         if ((err as { code?: string }).code === "55P03") {
           throw new Error(
             `timed out after ${lockTimeoutMs}ms waiting for key ${JSON.stringify(key)} ` +
@@ -149,7 +178,10 @@ export function createPostgresStore(pool: Pool, options: PostgresStoreOptions = 
     }
     throw new Error(
       `could not claim key ${JSON.stringify(key)} after ${MAX_CLAIM_ATTEMPTS} attempts; ` +
-        "its row keeps disappearing between claim and read (a prune racing this key?)",
+        (lastClaimError
+          ? "the claim was still failing with a serialization error (40001)"
+          : "its row keeps disappearing between claim and read (a prune racing this key?)"),
+      lastClaimError ? { cause: lastClaimError } : undefined,
     );
   }
 

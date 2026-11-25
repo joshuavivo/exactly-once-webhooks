@@ -21,6 +21,21 @@ follow [Semantic Versioning](https://semver.org/).
   and the README has an npm version badge. The GitHub Release still carries the same
   tarball.
 
+### Fixed
+- **Postgres store: concurrent duplicates at `REPEATABLE READ` or `SERIALIZABLE` now
+  return `duplicate`.** On a connection whose default isolation is stricter than
+  `READ COMMITTED`, a delivery waiting on another delivery's claim got Postgres error
+  `40001` when the holder committed, instead of the stored result. The effect still ran
+  once, and a later redelivery was a duplicate; only the concurrent waiters saw the
+  error. The store now catches `40001` on the claim, before the effect has started,
+  and looks again in a new transaction. **If you use `onRetry` as an alarm:** at those
+  two levels it now fires once for each delivery that started before the holder
+  committed. It did not fire there before, because those deliveries threw. That is
+  ordinary contention, not a failing effect. A `40001` from the effect itself is still
+  re-thrown. If the claim is still failing with `40001` on the 50th pass, the error
+  says so and carries that failure as its `cause`. Tests run the race at both levels
+  against a real Postgres. DESIGN.md, limitation 8.
+
 ## [0.10.1] - 2026-11-23
 
 No change to what the library does since 0.10.0: in `src/` only comments changed
